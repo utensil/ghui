@@ -220,10 +220,7 @@ const RestRepositorySchema = Schema.Struct({
 	has_discussions: Schema.optionalKey(Schema.Boolean),
 })
 
-const RepositoryListResponseSchema = Schema.Union([
-	Schema.Array(RestRepositorySchema),
-	Schema.Array(Schema.Array(RestRepositorySchema)),
-])
+const RepositoryPageResponseSchema = Schema.Array(RestRepositorySchema)
 
 const NotificationResponseSchema = Schema.Struct({
 	id: Schema.String,
@@ -1072,23 +1069,33 @@ export class GitHubService extends Context.Service<GitHubService, {
 				return response.data.repository?.discussions.nodes.flatMap((node) => node ? [parseDiscussionItem(repository, node)] : []) ?? []
 			})
 
-			const listRepositoryItems = (label: string, surface: "myRepos" | "stars" | "sharedRepos" | "watchedRepos", args: readonly string[]) =>
-				ghJson(label, RepositoryListResponseSchema, args).pipe(
-					Effect.map((response) => flattenSlurpedPages(response).map((repository) => parseRepositoryItem(surface, repository))),
-				)
+			const listRepositoryItems = (label: string, surface: "myRepos" | "stars" | "sharedRepos" | "watchedRepos", endpoint: string, queryArgs: readonly string[]) =>
+				Effect.gen(function*() {
+					const repositories: RestRepository[] = []
+					let page = 1
+					while (repositories.length < config.prFetchLimit) {
+						const pageSize = Math.min(100, config.prFetchLimit - repositories.length)
+						const response = yield* ghJson(label, RepositoryPageResponseSchema, [
+							"api", "--method", "GET", endpoint,
+							"-f", `per_page=${pageSize}`,
+							"-f", `page=${page}`,
+							...queryArgs,
+						])
+						repositories.push(...response)
+						if (response.length < pageSize) break
+						page += 1
+					}
+					return repositories.map((repository) => parseRepositoryItem(surface, repository))
+				})
 
 			const listMyRepositories = () =>
-				listRepositoryItems("listMyRepositories", "myRepos", [
-					"api", "--method", "GET", "--paginate", "--slurp", "user/repos",
+				listRepositoryItems("listMyRepositories", "myRepos", "user/repos", [
 					"-f", "affiliation=owner",
 					"-f", "sort=updated",
-					"-f", "per_page=100",
 				])
 
 			const listStarredRepositories = () =>
-				listRepositoryItems("listStarredRepositories", "stars", [
-					"api", "--method", "GET", "--paginate", "--slurp", "user/starred",
-					"-f", "per_page=100",
+				listRepositoryItems("listStarredRepositories", "stars", "user/starred", [
 					"-f", "sort=updated",
 				])
 
@@ -1096,18 +1103,13 @@ export class GitHubService extends Context.Service<GitHubService, {
 				ghVoid("unstarRepository", ["api", "--method", "DELETE", `user/starred/${repository}`])
 
 			const listSharedRepositories = () =>
-				listRepositoryItems("listSharedRepositories", "sharedRepos", [
-					"api", "--method", "GET", "--paginate", "--slurp", "user/repos",
+				listRepositoryItems("listSharedRepositories", "sharedRepos", "user/repos", [
 					"-f", "affiliation=collaborator",
 					"-f", "sort=updated",
-					"-f", "per_page=100",
 				])
 
 			const listWatchedRepositories = () =>
-				listRepositoryItems("listWatchedRepositories", "watchedRepos", [
-					"api", "--method", "GET", "--paginate", "--slurp", "user/subscriptions",
-					"-f", "per_page=100",
-				])
+				listRepositoryItems("listWatchedRepositories", "watchedRepos", "user/subscriptions", [])
 
 			const unwatchRepository = (repository: string) =>
 				ghVoid("unwatchRepository", ["api", "--method", "DELETE", `repos/${repository}/subscription`])

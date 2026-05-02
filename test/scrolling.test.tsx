@@ -53,7 +53,7 @@ const settle = async (
 	return false
 }
 
-const setupApp = async (cols = 100, rows = 20, surface: "pullRequests" | "issues" = "pullRequests") => {
+const setupApp = async (cols = 100, rows = 20, surface: "pullRequests" | "issues" | "stars" = "pullRequests") => {
 	if (!cached) cached = await loadApp()
 	const { createTestRenderer, createRoot, RegistryProvider, createDefaultOpenTuiKeymap, KeymapProvider, App } = cached
 	const setup = await createTestRenderer({ width: cols, height: rows })
@@ -73,8 +73,12 @@ const setupApp = async (cols = 100, rows = 20, surface: "pullRequests" | "issues
 		await act(async () => {
 			setup.mockInput.pressKey("p")
 		})
+	} else if (surface === "stars") {
+		await act(async () => {
+			setup.mockInput.pressKey("f")
+		})
 	}
-	const readyText = surface === "issues" ? "Mock issue" : "Mock PR"
+	const readyText = surface === "issues" ? "Mock issue" : surface === "stars" ? "Mock stars item" : "Mock PR"
 	const ready = await settle(setup.renderOnce, () => setup.captureCharFrame().includes(readyText))
 	if (!ready) throw new Error(`App never rendered ${readyText}s:\n` + setup.captureCharFrame())
 	return setup
@@ -145,6 +149,17 @@ describe("Issue surface", () => {
 		expect(frame).toContain("issues")
 		expect(frame).toContain("ISSUES")
 		expect(frame).toContain("Mock issue")
+		renderer.destroy()
+	})
+})
+
+describe("Auxiliary surfaces", () => {
+	test("stars load when selected from the surface shortcut", async () => {
+		const { captureCharFrame, renderer } = await setupApp(100, 20, "stars")
+		const frame = captureCharFrame()
+		expect(frame).toContain("stars")
+		expect(frame).toContain("STARS")
+		expect(frame).toContain("Mock stars item")
 		renderer.destroy()
 	})
 })

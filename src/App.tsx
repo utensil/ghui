@@ -430,7 +430,7 @@ const auxiliaryStatusAtom = Atom.make((get): LoadStatus => {
 	const result = get(auxiliaryAtom)
 	const load = get(auxiliaryLoadAtom)
 	if (result.waiting && load === null) return "loading"
-	return AsyncResult.isFailure(result) ? "error" : "ready"
+	return AsyncResult.isFailure(result) && load === null ? "error" : "ready"
 })
 
 const displayedPullRequestsAtom = Atom.make((get) => {
@@ -952,7 +952,6 @@ export const App = () => {
 	const auxiliaryResult = useAtomValue(auxiliaryAtom)
 	const refreshPullRequestsAtom = useAtomRefresh(pullRequestsAtom)
 	const refreshIssuesAtom = useAtomRefresh(issuesAtom)
-	const refreshAuxiliaryAtom = useAtomRefresh(auxiliaryAtom)
 	const [activeSurface, setActiveSurface] = useAtom(activeSurfaceAtom)
 	const [activeView, setActiveView] = useAtom(activeViewAtom)
 	const [activeIssueView, setActiveIssueView] = useAtom(activeIssueViewAtom)
@@ -1092,6 +1091,7 @@ export const App = () => {
 	const issueRefreshAtRef = useRef<Partial<Record<string, number>>>({})
 	const auxiliaryRefreshAtRef = useRef<Partial<Record<string, number>>>({})
 	const backgroundRefreshInFlightRef = useRef(new Set<string>())
+	const auxiliaryLoadInFlightRef = useRef(new Set<string>())
 	const terminalFocusedRef = useRef(true)
 	const lastUserInputAtRef = useRef(Date.now())
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
@@ -1160,7 +1160,7 @@ export const App = () => {
 			: auxiliaryStatus === "loading" && auxiliaryItems.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const issueError = AsyncResult.isFailure(issueResult) ? errorMessage(Cause.squash(issueResult.cause)) : null
-	const auxiliaryError = AsyncResult.isFailure(auxiliaryResult) ? errorMessage(Cause.squash(auxiliaryResult.cause)) : null
+	const auxiliaryError = AsyncResult.isFailure(auxiliaryResult) && auxiliaryLoad === null ? errorMessage(Cause.squash(auxiliaryResult.cause)) : null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 	issueStatusRef.current = issueStatus
@@ -1349,12 +1349,21 @@ export const App = () => {
 	refreshIssuesRef.current = refreshIssues
 	const refreshAuxiliarySurface = (message?: string) => {
 		refreshGenerationRef.current += 1
+		if (!isAuxiliarySurface(activeSurface)) return
 		if (message) {
 			setNotice(null)
 			setRefreshCompletionMessage(message)
 			setRefreshStartedAt(lastAuxiliaryRefreshAtRef.current)
 		}
-		refreshAuxiliaryAtom()
+		void refreshAuxiliaryQuietly(activeSurface, activeSurface === "discussions" ? discussionRepository : null).then(() => {
+			if (message) flashNotice(`✓ ${message}`)
+			setRefreshCompletionMessage(null)
+			setRefreshStartedAt(null)
+		}).catch((error) => {
+			flashNotice(errorMessage(error))
+			setRefreshCompletionMessage(null)
+			setRefreshStartedAt(null)
+		})
 	}
 	refreshAuxiliaryRef.current = refreshAuxiliarySurface
 	const refreshPullRequestsQuietly = () => {
@@ -1413,14 +1422,19 @@ export const App = () => {
 			issueRefreshAtRef.current[cacheKey] = fetchedAt.getTime()
 		})
 	}
-	const refreshAuxiliaryQuietly = (surface: AuxiliarySurface, repository: string | null) =>
-		loadAuxiliarySurface({ surface, repository }).then((load) => {
+	const refreshAuxiliaryQuietly = (surface: AuxiliarySurface, repository: string | null) => {
+		const cacheKey = auxiliaryCacheKey(surface, surface === "discussions" ? repository : null)
+		if (auxiliaryLoadInFlightRef.current.has(cacheKey)) return Promise.resolve()
+		auxiliaryLoadInFlightRef.current.add(cacheKey)
+		return loadAuxiliarySurface({ surface, repository }).then((load) => {
 			setAuxiliaryLoadCache((current) => ({ ...current, [load.cacheKey]: load }))
 			if (load.fetchedAt) auxiliaryRefreshAtRef.current[load.cacheKey] = load.fetchedAt.getTime()
+		}).finally(() => {
+			auxiliaryLoadInFlightRef.current.delete(cacheKey)
 		})
+	}
 	const refreshBackgroundTarget = (target: BackgroundRefreshTarget, minimumAgeMs: number) => {
 		if (!terminalFocusedRef.current) return
-		if (Date.now() - lastUserInputAtRef.current < USER_INPUT_REFRESH_IDLE_MS) return
 		const key = backgroundRefreshTargetKey(target)
 		if (backgroundRefreshInFlightRef.current.has(key)) return
 		const lastRefreshAt = target._tag === "pullRequests"
@@ -1428,6 +1442,8 @@ export const App = () => {
 			: target._tag === "issues"
 				? issueRefreshAtRef.current[currentIssueQueueCacheKey] ?? lastIssueRefreshAtRef.current
 				: auxiliaryRefreshAtRef.current[target.cacheKey] ?? 0
+		const coldLoad = lastRefreshAt === 0
+		if (!coldLoad && Date.now() - lastUserInputAtRef.current < USER_INPUT_REFRESH_IDLE_MS) return
 		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
 		if (target._tag === "pullRequests" && pullRequestStatusRef.current === "loading") return
 		if (target._tag === "issues" && issueStatusRef.current === "loading") return
@@ -1479,7 +1495,8 @@ export const App = () => {
 	const showAuxiliarySurface = (surface: AuxiliarySurface) => {
 		if (activeSurface === surface) return
 		rememberActiveSelection()
-		const nextCacheKey = auxiliaryCacheKey(surface, surface === "discussions" ? discussionRepository : null)
+		const repository = surface === "discussions" ? discussionRepository : null
+		const nextCacheKey = auxiliaryCacheKey(surface, repository)
 		setActiveSurface(surface)
 		setSelectedIndex(registry.get(auxiliarySelectionAtom)[nextCacheKey] ?? 0)
 		setDetailFullView(false)
@@ -1487,6 +1504,9 @@ export const App = () => {
 		setDiffCommentMode(false)
 		setFilterDraft(filterQuery)
 		setNotice(null)
+		if (!registry.get(auxiliaryLoadCacheAtom)[nextCacheKey]) {
+			void refreshAuxiliaryQuietly(surface, repository).catch((error) => flashNotice(errorMessage(error)))
+		}
 	}
 	const viewRepositoryPullRequests = (repository: string) => {
 		showPullRequests()
@@ -1774,6 +1794,13 @@ export const App = () => {
 		if (registry.get(issueLoadCacheAtom)[currentIssueQueueCacheKey]) return
 		refreshIssuesAtom()
 	}, [currentIssueQueueCacheKey, refreshIssuesAtom, registry])
+
+	useEffect(() => {
+		if (!currentAuxiliaryCacheKey) return
+		if (registry.get(auxiliaryLoadCacheAtom)[currentAuxiliaryCacheKey]) return
+		if (!isAuxiliarySurface(activeSurface)) return
+		void refreshAuxiliaryQuietly(activeSurface, activeSurface === "discussions" ? discussionRepository : null).catch((error) => flashNotice(errorMessage(error)))
+	}, [activeSurface, currentAuxiliaryCacheKey, discussionRepository, registry])
 
 	useEffect(() => {
 		if (!refreshCompletionMessage || refreshStartedAt === null) return
