@@ -8,6 +8,10 @@ export const pullRequestQueueModes = ["authored", "review", "assigned", "mention
 export type PullRequestUserQueueMode = (typeof pullRequestQueueModes)[number]
 export type PullRequestQueueMode = "repository" | PullRequestUserQueueMode
 
+export const issueQueueModes = ["authored", "assigned", "mentioned"] as const
+export type IssueUserQueueMode = (typeof issueQueueModes)[number]
+export type IssueQueueMode = "repository" | IssueUserQueueMode
+
 export const pullRequestQueueLabels = {
 	repository: "repository",
 	authored: "authored",
@@ -27,6 +31,23 @@ export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, auth
 	return qualifiers[mode]
 }
 
+export const issueQueueLabels = {
+	repository: "repository",
+	authored: "authored",
+	assigned: "assigned",
+	mentioned: "mentioned",
+} as const satisfies Record<IssueQueueMode, string>
+
+export const issueQueueSearchQualifier = (mode: IssueQueueMode, author: string, repository: string | null) => {
+	const qualifiers = {
+		repository: repository ? `repo:${repository}` : `author:${author}`,
+		authored: `author:${author}`,
+		assigned: "assignee:@me",
+		mentioned: "mentions:@me",
+	} as const satisfies Record<IssueQueueMode, string>
+	return qualifiers[mode]
+}
+
 export type CheckConclusion = "success" | "failure" | "neutral" | "skipped" | "cancelled" | "timed_out"
 
 export type CheckRunStatus = "completed" | "in_progress" | "queued" | "pending"
@@ -36,6 +57,8 @@ export type CheckRollupStatus = "passing" | "pending" | "failing" | "none"
 export type ReviewStatus = "draft" | "approved" | "changes" | "review" | "none"
 
 export type Mergeable = "mergeable" | "conflicting" | "unknown"
+
+export type IssueState = "open" | "closed"
 
 // DiffCommentSide is the only literal type still consumed at runtime — GitHubService
 // uses it as a Schema inside PullRequestCommentSchema.
@@ -99,14 +122,54 @@ export interface PullRequestItem {
 	readonly url: string
 }
 
+export interface IssueComment {
+	readonly id: string
+	readonly author: string
+	readonly body: string
+	readonly createdAt: Date | null
+	readonly updatedAt: Date | null
+	readonly url: string | null
+}
+
+export interface IssueItem {
+	readonly repository: string
+	readonly author: string
+	readonly number: number
+	readonly title: string
+	readonly body: string
+	readonly labels: readonly PullRequestLabel[]
+	readonly assignees: readonly string[]
+	readonly comments: number
+	readonly state: IssueState
+	readonly detailLoaded: boolean
+	readonly createdAt: Date
+	readonly updatedAt: Date
+	readonly closedAt: Date | null
+	readonly url: string
+	readonly timeline: readonly IssueComment[]
+}
+
 export interface PullRequestPage {
 	readonly items: readonly PullRequestItem[]
 	readonly endCursor: string | null
 	readonly hasNextPage: boolean
 }
 
+export interface IssuePage {
+	readonly items: readonly IssueItem[]
+	readonly endCursor: string | null
+	readonly hasNextPage: boolean
+}
+
 export interface ListPullRequestPageInput {
 	readonly mode: PullRequestQueueMode
+	readonly repository: string | null
+	readonly cursor: string | null
+	readonly pageSize: number
+}
+
+export interface ListIssuePageInput {
+	readonly mode: IssueQueueMode
 	readonly repository: string | null
 	readonly cursor: string | null
 	readonly pageSize: number

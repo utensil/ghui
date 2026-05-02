@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { CheckItem, CreatePullRequestCommentInput, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
+import type { CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
 import { GitHubService } from "./GitHubService.js"
 
 export interface MockOptions {
@@ -60,6 +60,30 @@ const buildPullRequest = (index: number, options: Required<MockOptions>): PullRe
 	}
 }
 
+const buildIssue = (index: number, options: Required<MockOptions>): IssueItem => {
+	const repoIndex = index % options.repoCount
+	const repository = `mock-org/repo-${repoIndex}`
+	const number = 2000 + index
+	const createdAt = new Date(Date.now() - index * 43_200_000)
+	return {
+		repository,
+		author: index % 2 === 0 ? options.username : `contributor-${index % 5}`,
+		number,
+		title: `Mock issue ${number}: investigate workflow ${index}`,
+		body: `This is mock issue #${number}.\n\n- observed behaviour\n- expected behaviour\n- reproduction notes`,
+		labels: synthLabels(index),
+		assignees: index % 3 === 0 ? [options.username] : [],
+		comments: index % 4,
+		state: "open",
+		detailLoaded: true,
+		createdAt,
+		updatedAt: createdAt,
+		closedAt: null,
+		url: `https://github.com/${repository}/issues/${number}`,
+		timeline: [],
+	}
+}
+
 export const buildMockPullRequests = (options: MockOptions): readonly PullRequestItem[] => {
 	const resolved: Required<MockOptions> = {
 		prCount: options.prCount,
@@ -70,8 +94,25 @@ export const buildMockPullRequests = (options: MockOptions): readonly PullReques
 	return Array.from({ length: resolved.prCount }, (_, index) => buildPullRequest(index, resolved))
 }
 
+export const buildMockIssues = (options: MockOptions): readonly IssueItem[] => {
+	const resolved: Required<MockOptions> = {
+		prCount: options.prCount,
+		repoCount: options.repoCount ?? 4,
+		username: options.username ?? "mock-user",
+		seed: options.seed ?? 0,
+	}
+	return Array.from({ length: Math.max(12, Math.floor(resolved.prCount / 2)) }, (_, index) => buildIssue(index, resolved))
+}
+
 const filterByView = (mode: PullRequestQueueMode, repository: string | null, source: readonly PullRequestItem[]) => {
 	if (mode === "repository") return repository ? source.filter((item) => item.repository === repository) : []
+	return source
+}
+
+const filterIssuesByView = (mode: IssueQueueMode, repository: string | null, source: readonly IssueItem[], username: string) => {
+	if (mode === "repository") return repository ? source.filter((item) => item.repository === repository) : []
+	if (mode === "authored") return source.filter((item) => item.author === username)
+	if (mode === "assigned") return source.filter((item) => item.assignees.includes(username))
 	return source
 }
 
@@ -87,9 +128,22 @@ const pageItems = (source: readonly PullRequestItem[], cursor: string | null, pa
 	}
 }
 
+const pageIssueItems = (source: readonly IssueItem[], cursor: string | null, pageSize: number): IssuePage => {
+	const start = cursor ? Number.parseInt(cursor, 10) : 0
+	const safeStart = Number.isFinite(start) && start >= 0 ? start : 0
+	const safePageSize = Math.max(1, Math.min(100, pageSize))
+	const end = Math.min(source.length, safeStart + safePageSize)
+	return {
+		items: source.slice(safeStart, end),
+		endCursor: end > safeStart ? String(end) : null,
+		hasNextPage: end < source.length,
+	}
+}
+
 export const MockGitHubService = {
 	layer: (options: MockOptions) => {
 		const items = buildMockPullRequests(options)
+		const issues = buildMockIssues(options)
 		const username = options.username ?? "mock-user"
 		const summaryItems = items.map((item) => ({
 			...item,
@@ -101,6 +155,7 @@ export const MockGitHubService = {
 			detailLoaded: false,
 		} satisfies PullRequestItem))
 		const findPullRequest = (repository: string, number: number) => items.find((item) => item.repository === repository && item.number === number) ?? items[0]!
+		const findIssue = (repository: string, number: number) => issues.find((item) => item.repository === repository && item.number === number) ?? issues[0]!
 
 		return Layer.succeed(
 			GitHubService,
@@ -108,6 +163,26 @@ export const MockGitHubService = {
 				listOpenPullRequests: (mode: PullRequestQueueMode, repository: string | null) => Effect.succeed(filterByView(mode, repository, summaryItems)),
 				listOpenPullRequestPage: (input) => Effect.succeed(pageItems(filterByView(input.mode, input.repository, summaryItems), input.cursor, input.pageSize)),
 				listOpenPullRequestDetails: (mode: PullRequestQueueMode, repository: string | null) => Effect.succeed(filterByView(mode, repository, items)),
+				listOpenIssuePage: (input) => Effect.succeed(pageIssueItems(filterIssuesByView(input.mode, input.repository, issues, username), input.cursor, input.pageSize)),
+				getIssueDetails: (repository, number) => Effect.succeed(findIssue(repository, number)),
+				listIssueComments: (_repo, number) => Effect.succeed(Array.from({ length: number % 3 }, (_, index) => ({
+					id: `issue-comment:${number}:${index}`,
+					author: index % 2 === 0 ? username : "reviewer",
+					body: `Mock issue comment ${index + 1} on #${number}`,
+					createdAt: new Date(),
+					updatedAt: new Date(),
+					url: null,
+				} satisfies IssueComment))),
+				createIssueComment: (_repo, _number, body) => Effect.succeed({
+					id: `mock-issue-comment:${Date.now()}`,
+					author: username,
+					body,
+					createdAt: new Date(),
+					updatedAt: new Date(),
+					url: null,
+				} satisfies IssueComment),
+				closeIssue: () => Effect.void,
+				reopenIssue: () => Effect.void,
 				getPullRequestDetails: (repository, number) => Effect.succeed(findPullRequest(repository, number)),
 				getAuthenticatedUser: () => Effect.succeed(username),
 				getPullRequestDiff: (_repo, _number) => Effect.succeed(""),
@@ -140,6 +215,8 @@ export const MockGitHubService = {
 				listRepoLabels: () => Effect.succeed([]),
 				addPullRequestLabel: () => Effect.void,
 				removePullRequestLabel: () => Effect.void,
+				addIssueLabel: () => Effect.void,
+				removeIssueLabel: () => Effect.void,
 			}),
 		)
 	},

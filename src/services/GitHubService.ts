@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { config } from "../config.js"
-import { DiffCommentSide, pullRequestQueueSearchQualifier, type CheckItem, type CreatePullRequestCommentInput, type ListPullRequestPageInput, type Mergeable, type PullRequestItem, type PullRequestMergeAction, type PullRequestMergeInfo, type PullRequestPage, type PullRequestQueueMode, type PullRequestReviewComment, type ReviewStatus } from "../domain.js"
+import { DiffCommentSide, issueQueueSearchQualifier, pullRequestQueueSearchQualifier, type CheckItem, type CreatePullRequestCommentInput, type IssueComment, type IssueItem, type IssuePage, type IssueQueueMode, type IssueState, type ListIssuePageInput, type ListPullRequestPageInput, type Mergeable, type PullRequestItem, type PullRequestMergeAction, type PullRequestMergeInfo, type PullRequestPage, type PullRequestQueueMode, type PullRequestReviewComment, type ReviewStatus } from "../domain.js"
 import { getMergeActionDefinition } from "../mergeActions.js"
 import { CommandError, CommandRunner, type JsonParseError } from "./CommandRunner.js"
 
@@ -64,10 +64,36 @@ const RawPullRequestNodeSchema = Schema.Struct({
 	statusCheckRollup: Schema.optionalKey(Schema.NullOr(RawStatusCheckRollupSchema)),
 })
 
+const RawAssigneeSchema = Schema.Struct({ login: Schema.String })
+
+const RawIssueNodeSchema = Schema.Struct({
+	number: Schema.Number,
+	title: Schema.String,
+	body: Schema.NullOr(Schema.String),
+	state: Schema.String,
+	createdAt: Schema.String,
+	updatedAt: Schema.String,
+	closedAt: OptionalNullableString,
+	url: Schema.String,
+	author: RawAuthorSchema,
+	repository: RawRepositorySchema,
+	labels: Schema.Struct({ nodes: Schema.Array(RawLabelSchema) }),
+	assignees: Schema.Struct({ nodes: Schema.Array(RawAssigneeSchema) }),
+	comments: Schema.Struct({ totalCount: Schema.Number }),
+})
+
 const PullRequestDetailResponseSchema = Schema.Struct({
 	data: Schema.Struct({
 		repository: Schema.NullOr(Schema.Struct({
 			pullRequest: Schema.NullOr(RawPullRequestNodeSchema),
+		})),
+	}),
+})
+
+const IssueDetailResponseSchema = Schema.Struct({
+	data: Schema.Struct({
+		repository: Schema.NullOr(Schema.Struct({
+			issue: Schema.NullOr(RawIssueNodeSchema),
 		})),
 	}),
 })
@@ -92,6 +118,17 @@ const RepositoryPullRequestsResponseSchema = Schema.Struct({
 		repository: Schema.NullOr(Schema.Struct({
 			pullRequests: Schema.Struct({
 				nodes: Schema.Array(Schema.NullOr(RawPullRequestSummaryNodeSchema)),
+				pageInfo: PageInfoSchema,
+			}),
+		})),
+	}),
+})
+
+const RepositoryIssuesResponseSchema = Schema.Struct({
+	data: Schema.Struct({
+		repository: Schema.NullOr(Schema.Struct({
+			issues: Schema.Struct({
+				nodes: Schema.Array(Schema.NullOr(RawIssueNodeSchema)),
 				pageInfo: PageInfoSchema,
 			}),
 		})),
@@ -149,11 +186,31 @@ const RepoLabelsResponseSchema = Schema.Array(Schema.Struct({
 	color: Schema.String,
 }))
 
+const IssueCommentSchema = Schema.Struct({
+	id: Schema.optionalKey(Schema.NullOr(Schema.Union([Schema.Number, Schema.String]))),
+	node_id: OptionalNullableString,
+	body: OptionalNullableString,
+	html_url: OptionalNullableString,
+	url: OptionalNullableString,
+	created_at: OptionalNullableString,
+	updated_at: OptionalNullableString,
+	user: Schema.optionalKey(Schema.NullOr(Schema.Struct({
+		login: OptionalNullableString,
+	}))),
+})
+
+const IssueCommentsResponseSchema = Schema.Union([
+	Schema.Array(IssueCommentSchema),
+	Schema.Array(Schema.Array(IssueCommentSchema)),
+])
+
 type RawPullRequestSummaryNode = Schema.Schema.Type<typeof RawPullRequestSummaryNodeSchema>
 type RawPullRequestNode = Schema.Schema.Type<typeof RawPullRequestNodeSchema>
+type RawIssueNode = Schema.Schema.Type<typeof RawIssueNodeSchema>
 type RawCheckContext = Schema.Schema.Type<typeof RawCheckContextSchema>
 type RawPullRequestComment = Schema.Schema.Type<typeof PullRequestCommentSchema>
 type RawPullRequestFile = Schema.Schema.Type<typeof PullRequestFileSchema>
+type RawIssueComment = Schema.Schema.Type<typeof IssueCommentSchema>
 
 type SearchResponse<Item> = {
 	readonly data: {
@@ -221,11 +278,38 @@ const DETAIL_FIELDS_FRAGMENT = `
         repository { nameWithOwner }
         labels(first: 20) { nodes { name color } }${STATUS_CHECK_FRAGMENT}`
 
+const ISSUE_FIELDS_FRAGMENT = `
+        number
+        title
+        body
+        state
+        createdAt
+        updatedAt
+        closedAt
+        url
+        author { login }
+        repository { nameWithOwner }
+        labels(first: 20) { nodes { name color } }
+        assignees(first: 10) { nodes { login } }
+        comments { totalCount }`
+
 const pullRequestSearchQuery = `
 query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
   search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
     nodes {
       ... on PullRequest {${DETAIL_FIELDS_FRAGMENT}
+      }
+    }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+`
+
+const issueSearchQuery = `
+query Issues($searchQuery: String!, $first: Int!, $after: String) {
+  search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
+    nodes {
+      ... on Issue {${ISSUE_FIELDS_FRAGMENT}
       }
     }
     pageInfo { hasNextPage endCursor }
@@ -242,6 +326,15 @@ query PullRequest($owner: String!, $name: String!, $number: Int!) {
 }
 `
 
+const issueDetailQuery = `
+query Issue($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {${ISSUE_FIELDS_FRAGMENT}
+    }
+  }
+}
+`
+
 const pullRequestSummarySearchQuery = `
 query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
   search(query: $searchQuery, type: ISSUE, first: $first, after: $after) {
@@ -250,6 +343,18 @@ query PullRequests($searchQuery: String!, $first: Int!, $after: String) {
       }
     }
     pageInfo { hasNextPage endCursor }
+  }
+}
+`
+
+const repositoryIssuesQuery = `
+query RepositoryIssues($owner: String!, $name: String!, $first: Int!, $after: String) {
+  repository(owner: $owner, name: $name) {
+    issues(states: OPEN, first: $first, after: $after, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      nodes {${ISSUE_FIELDS_FRAGMENT}
+      }
+      pageInfo { hasNextPage endCursor }
+    }
   }
 }
 `
@@ -413,12 +518,46 @@ const parsePullRequest = (item: RawPullRequestNode): PullRequestItem => {
 	}
 }
 
+const getIssueState = (item: { readonly state: string }): IssueState =>
+	item.state.toLowerCase() === "open" ? "open" : "closed"
+
+const parseIssue = (item: RawIssueNode): IssueItem => ({
+	repository: item.repository.nameWithOwner,
+	author: item.author.login,
+	number: item.number,
+	title: item.title,
+	body: item.body ?? "",
+	labels: item.labels.nodes.map((label) => ({
+		name: label.name,
+		color: label.color ? `#${label.color}` : null,
+	})),
+	assignees: item.assignees.nodes.map((assignee) => assignee.login),
+	comments: item.comments.totalCount,
+	state: getIssueState(item),
+	detailLoaded: true,
+	createdAt: new Date(item.createdAt),
+	updatedAt: new Date(item.updatedAt),
+	closedAt: normalizeDate(item.closedAt),
+	url: item.url,
+	timeline: [],
+})
+
 const searchQuery = (mode: PullRequestQueueMode, author: string, repository: string | null) => {
 	const sort = mode === "repository" ? "sort:updated-desc" : "sort:created-desc"
 	return `${pullRequestQueueSearchQualifier(mode, author, repository)} is:pr is:open ${sort}`
 }
 
+const issueSearch = (mode: IssueQueueMode, author: string, repository: string | null) => {
+	return `${issueQueueSearchQualifier(mode, author, repository)} is:issue is:open sort:updated-desc`
+}
+
 const pullRequestPage = <Item>(connection: PullRequestConnection<Item>, parse: (node: Item) => PullRequestItem): PullRequestPage => ({
+	items: connection.nodes.flatMap((node) => node ? [parse(node)] : []),
+	endCursor: connection.pageInfo.endCursor,
+	hasNextPage: connection.pageInfo.hasNextPage && connection.pageInfo.endCursor !== null,
+})
+
+const issuePage = <Item>(connection: PullRequestConnection<Item>, parse: (node: Item) => IssueItem): IssuePage => ({
 	items: connection.nodes.flatMap((node) => node ? [parse(node)] : []),
 	endCursor: connection.pageInfo.endCursor,
 	hasNextPage: connection.pageInfo.hasNextPage && connection.pageInfo.endCursor !== null,
@@ -450,6 +589,18 @@ const parsePullRequestComments = (response: Schema.Schema.Type<typeof CommentsRe
 		return parsed ? [parsed] : []
 	})
 }
+
+const parseIssueComment = (comment: RawIssueComment): IssueComment => ({
+	id: String(comment.id ?? comment.node_id ?? `${comment.created_at ?? ""}:${comment.body ?? ""}`),
+	author: comment.user?.login ?? "unknown",
+	body: comment.body ?? "",
+	createdAt: comment.created_at ? new Date(comment.created_at) : null,
+	updatedAt: comment.updated_at ? new Date(comment.updated_at) : null,
+	url: comment.html_url ?? comment.url ?? null,
+})
+
+const parseIssueComments = (response: Schema.Schema.Type<typeof IssueCommentsResponseSchema>): readonly IssueComment[] =>
+	flattenSlurpedPages(response).map(parseIssueComment)
 
 const flattenSlurpedPages = <Item>(response: readonly Item[] | readonly (readonly Item[])[]): readonly Item[] =>
 	Array.isArray(response[0]) ? (response as readonly (readonly Item[])[]).flat() : response as readonly Item[]
@@ -504,6 +655,12 @@ export class GitHubService extends Context.Service<GitHubService, {
 	readonly listOpenPullRequests: (mode: PullRequestQueueMode, repository: string | null) => Effect.Effect<readonly PullRequestItem[], GitHubError>
 	readonly listOpenPullRequestPage: (input: ListPullRequestPageInput) => Effect.Effect<PullRequestPage, GitHubError>
 	readonly listOpenPullRequestDetails: (mode: PullRequestQueueMode, repository: string | null) => Effect.Effect<readonly PullRequestItem[], GitHubError>
+	readonly listOpenIssuePage: (input: ListIssuePageInput) => Effect.Effect<IssuePage, GitHubError>
+	readonly getIssueDetails: (repository: string, number: number) => Effect.Effect<IssueItem, GitHubError>
+	readonly listIssueComments: (repository: string, number: number) => Effect.Effect<readonly IssueComment[], GitHubError>
+	readonly createIssueComment: (repository: string, number: number, body: string) => Effect.Effect<IssueComment, GitHubError>
+	readonly closeIssue: (repository: string, number: number) => Effect.Effect<void, CommandError>
+	readonly reopenIssue: (repository: string, number: number) => Effect.Effect<void, CommandError>
 	readonly getPullRequestDetails: (repository: string, number: number) => Effect.Effect<PullRequestItem, GitHubError>
 	readonly getAuthenticatedUser: () => Effect.Effect<string, GitHubError>
 	readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
@@ -516,6 +673,8 @@ export class GitHubService extends Context.Service<GitHubService, {
 	readonly listRepoLabels: (repository: string) => Effect.Effect<readonly { readonly name: string; readonly color: string | null }[], GitHubError>
 	readonly addPullRequestLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
 	readonly removePullRequestLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
+	readonly addIssueLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
+	readonly removeIssueLabel: (repository: string, number: number, label: string) => Effect.Effect<void, CommandError>
 }>()("ghui/GitHubService") {
 	static readonly layerNoDeps = Layer.effect(
 		GitHubService,
@@ -542,8 +701,23 @@ export class GitHubService extends Context.Service<GitHubService, {
 				})
 			}
 
+			const issueSearchPage = <Item extends Schema.Top>(label: string, query: string, schema: Item, parse: (node: Item["Type"]) => IssueItem) => {
+				const responseSchema = SearchResponseSchema(schema)
+				return Effect.fn(`GitHubService.${label}`)(function*(input: ListIssuePageInput) {
+					const response: SearchResponse<Item["Type"]> = yield* command.runSchema(responseSchema, "gh", [
+						"api", "graphql",
+						"-f", `query=${query}`,
+						"-F", `searchQuery=${issueSearch(input.mode, config.author, input.repository)}`,
+						"-F", `first=${input.pageSize}`,
+						...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
+					])
+					return issuePage(response.data.search, parse)
+				})
+			}
+
 			const listOpenPullRequestSearchPage = searchPage("listOpenPullRequestSearchPage", pullRequestSummarySearchQuery, RawPullRequestSummaryNodeSchema, parsePullRequestSummary)
 			const listOpenPullRequestDetailsPage = searchPage("listOpenPullRequestDetailsPage", pullRequestSearchQuery, RawPullRequestNodeSchema, parsePullRequest)
+			const listOpenIssueSearchPage = issueSearchPage("listOpenIssueSearchPage", issueSearchQuery, RawIssueNodeSchema, parseIssue)
 
 			const listRepositoryPullRequestPage = Effect.fn("GitHubService.listRepositoryPullRequestPage")(function*(input: ListPullRequestPageInput) {
 				if (!input.repository) return { items: [], endCursor: null, hasNextPage: false } satisfies PullRequestPage
@@ -567,11 +741,40 @@ export class GitHubService extends Context.Service<GitHubService, {
 				return pullRequestPage(connection, parsePullRequestSummary)
 			})
 
+			const listRepositoryIssuePage = Effect.fn("GitHubService.listRepositoryIssuePage")(function*(input: ListIssuePageInput) {
+				if (!input.repository) return { items: [], endCursor: null, hasNextPage: false } satisfies IssuePage
+				const repo = repositoryParts(input.repository)
+				if (!repo) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Invalid repository: ${input.repository}`, cause: input.repository })
+				}
+
+				const response = yield* command.runSchema(RepositoryIssuesResponseSchema, "gh", [
+					"api", "graphql",
+					"-f", `query=${repositoryIssuesQuery}`,
+					"-F", `owner=${repo.owner}`,
+					"-F", `name=${repo.name}`,
+					"-F", `first=${input.pageSize}`,
+					...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
+				])
+				const connection = response.data.repository?.issues
+				if (!connection) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Repository not found: ${input.repository}`, cause: input.repository })
+				}
+				return issuePage(connection, parseIssue)
+			})
+
 			const listOpenPullRequestPage = Effect.fn("GitHubService.listOpenPullRequestPage")(function*(input: ListPullRequestPageInput) {
 				const pageSize = Math.max(1, Math.min(100, input.pageSize))
 				const pageInput = { ...input, pageSize }
 				if (pageInput.mode === "repository" && pageInput.repository) return yield* listRepositoryPullRequestPage(pageInput)
 				return yield* listOpenPullRequestSearchPage(pageInput)
+			})
+
+			const listOpenIssuePage = Effect.fn("GitHubService.listOpenIssuePage")(function*(input: ListIssuePageInput) {
+				const pageSize = Math.max(1, Math.min(100, input.pageSize))
+				const pageInput = { ...input, pageSize }
+				if (pageInput.mode === "repository" && pageInput.repository) return yield* listRepositoryIssuePage(pageInput)
+				return yield* listOpenIssueSearchPage(pageInput)
 			})
 
 			const paginatePages = Effect.fn("GitHubService.paginatePages")(function*(mode: PullRequestQueueMode, repository: string | null, loadPage: (input: ListPullRequestPageInput) => Effect.Effect<PullRequestPage, GitHubError>) {
@@ -593,6 +796,26 @@ export class GitHubService extends Context.Service<GitHubService, {
 			})
 			const listOpenPullRequestDetails = Effect.fn("GitHubService.listOpenPullRequestDetails")(function*(mode: PullRequestQueueMode, repository: string | null) {
 				return yield* paginatePages(mode, repository, listOpenPullRequestDetailsPage)
+			})
+
+			const getIssueDetails = Effect.fn("GitHubService.getIssueDetails")(function*(repository: string, number: number) {
+				const repo = repositoryParts(repository)
+				if (!repo) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Invalid repository: ${repository}`, cause: repository })
+				}
+
+				const response = yield* command.runSchema(IssueDetailResponseSchema, "gh", [
+					"api", "graphql",
+					"-f", `query=${issueDetailQuery}`,
+					"-F", `owner=${repo.owner}`,
+					"-F", `name=${repo.name}`,
+					"-F", `number=${number}`,
+				])
+				const issue = response.data.repository?.issue
+				if (!issue) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Issue not found: ${repository}#${number}`, cause: `${repository}#${number}` })
+				}
+				return parseIssue(issue)
 			})
 
 			const getPullRequestDetails = Effect.fn("GitHubService.getPullRequestDetails")(function*(repository: string, number: number) {
@@ -627,6 +850,11 @@ export class GitHubService extends Context.Service<GitHubService, {
 				ghJson("listPullRequestComments", CommentsResponseSchema, [
 					"api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/comments`,
 				]).pipe(Effect.map(parsePullRequestComments))
+
+			const listIssueComments = (repository: string, number: number) =>
+				ghJson("listIssueComments", IssueCommentsResponseSchema, [
+					"api", "--paginate", "--slurp", `repos/${repository}/issues/${number}/comments`,
+				]).pipe(Effect.map(parseIssueComments))
 
 			const getPullRequestMergeInfo = Effect.fn("GitHubService.getPullRequestMergeInfo")(function*(repository: string, number: number) {
 				const info = yield* command.runSchema(MergeInfoResponseSchema, "gh", [
@@ -667,8 +895,20 @@ export class GitHubService extends Context.Service<GitHubService, {
 				return parsePullRequestComment(response) ?? fallbackCreatedComment(input)
 			})
 
+			const createIssueComment = (repository: string, number: number, body: string) =>
+				ghJson("createIssueComment", IssueCommentSchema, [
+					"api", "--method", "POST", `repos/${repository}/issues/${number}/comments`,
+					"-f", `body=${body}`,
+				]).pipe(Effect.map(parseIssueComment))
+
 			const toggleDraftStatus = (repository: string, number: number, isDraft: boolean) =>
 				ghVoid("toggleDraftStatus", ["pr", "ready", String(number), "--repo", repository, ...(isDraft ? [] : ["--undo"])])
+
+			const closeIssue = (repository: string, number: number) =>
+				ghVoid("closeIssue", ["api", "--method", "PATCH", `repos/${repository}/issues/${number}`, "-f", "state=closed"])
+
+			const reopenIssue = (repository: string, number: number) =>
+				ghVoid("reopenIssue", ["api", "--method", "PATCH", `repos/${repository}/issues/${number}`, "-f", "state=open"])
 
 			const listRepoLabels = (repository: string) =>
 				ghJson("listRepoLabels", RepoLabelsResponseSchema, [
@@ -681,10 +921,22 @@ export class GitHubService extends Context.Service<GitHubService, {
 			const removePullRequestLabel = (repository: string, number: number, label: string) =>
 				ghVoid("removePullRequestLabel", ["pr", "edit", String(number), "--repo", repository, "--remove-label", label])
 
+			const addIssueLabel = (repository: string, number: number, label: string) =>
+				ghVoid("addIssueLabel", ["issue", "edit", String(number), "--repo", repository, "--add-label", label])
+
+			const removeIssueLabel = (repository: string, number: number, label: string) =>
+				ghVoid("removeIssueLabel", ["issue", "edit", String(number), "--repo", repository, "--remove-label", label])
+
 			return GitHubService.of({
 				listOpenPullRequests,
 				listOpenPullRequestPage,
 				listOpenPullRequestDetails,
+				listOpenIssuePage,
+				getIssueDetails,
+				listIssueComments,
+				createIssueComment,
+				closeIssue,
+				reopenIssue,
 				getPullRequestDetails,
 				getAuthenticatedUser,
 				getPullRequestDiff,
@@ -697,6 +949,8 @@ export class GitHubService extends Context.Service<GitHubService, {
 				listRepoLabels,
 				addPullRequestLabel,
 				removePullRequestLabel,
+				addIssueLabel,
+				removeIssueLabel,
 			})
 		}),
 	)

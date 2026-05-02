@@ -11,9 +11,10 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, commandEnabled, filterCommands } from "./commands.js"
 import { config } from "./config.js"
-import { type CreatePullRequestCommentInput, type DiffCommentSide, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
+import { type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
+import { activeIssueViews, initialIssueView, issueViewCacheKey, issueViewEquals, issueViewLabel, issueViewMode, issueViewRepository, nextIssueView, type IssueView } from "./issueViews.js"
 import { availableMergeActions, mergeInfoFromPullRequest } from "./mergeActions.js"
 import { Observability } from "./observability.js"
 import { mergeCachedDetails } from "./pullRequestCache.js"
@@ -28,6 +29,8 @@ import { backspace as editorBackspace, deleteForward as editorDeleteForward, del
 import { buildStackedDiffFiles, diffCommentLocationKey, getStackedDiffCommentAnchors, nearestDiffCommentAnchorIndex, PullRequestDiffState, pullRequestDiffKey, safeDiffFileIndex, scrollTopForVisibleLine, splitPatchFiles, stackedDiffFileAtLine, type DiffCommentAnchor, type DiffView, type DiffWrapMode, type StackedDiffCommentAnchor } from "./ui/diff.js"
 import { DETAIL_BODY_SCROLL_LIMIT, DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailHeaderHeight, getDetailJunctionRows, getDetailsPaneHeight, getScrollableDetailBodyHeight, LoadingPane, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
 import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
+import { ISSUE_BODY_SCROLL_LIMIT, IssueDetailBody, IssueDetailHeader, IssueDetailsPane, getIssueDetailHeaderHeight, getIssueDetailJunctionRows, getIssueDetailsPaneHeight, getScrollableIssueBodyHeight } from "./ui/IssueDetailsPane.js"
+import { buildIssueListRows, issueListRowIndex, IssueList } from "./ui/IssueList.js"
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
 import { CloseModal, CommentModal, CommentThreadModal, filterLabels, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, ThemeModal, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type ThemeModalState } from "./ui/modals.js"
@@ -64,7 +67,16 @@ interface PullRequestLoad {
 	readonly hasNextPage: boolean
 }
 
+interface IssueLoad {
+	readonly view: IssueView
+	readonly data: readonly IssueItem[]
+	readonly fetchedAt: Date | null
+	readonly endCursor: string | null
+	readonly hasNextPage: boolean
+}
+
 interface DetailPlaceholderInput {
+	readonly surface: "pullRequests" | "issues"
 	readonly status: LoadStatus
 	readonly retryProgress: RetryProgress
 	readonly loadingIndicator: string
@@ -120,15 +132,31 @@ const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: r
 	return [...existing, ...mergedIncoming.filter((pullRequest) => !seen.has(pullRequest.url))]
 }
 
+const appendIssuePage = (existing: readonly IssueItem[], incoming: readonly IssueItem[]) => {
+	const seen = new Set(existing.map((issue) => issue.url))
+	return [...existing, ...incoming.filter((issue) => !seen.has(issue.url))]
+}
+
 const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
+const activeSurfaceAtom = Atom.make<"pullRequests" | "issues">("issues").pipe(Atom.keepAlive)
 const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(config.repository)).pipe(Atom.keepAlive)
+const activeIssueViewAtom = Atom.make<IssueView>(initialIssueView(config.repository)).pipe(Atom.keepAlive)
 const queueLoadCacheAtom = Atom.make<Partial<Record<string, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
+const issueLoadCacheAtom = Atom.make<Partial<Record<string, IssueLoad>>>({}).pipe(Atom.keepAlive)
 const queueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
+const issueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
 const trimQueueLoadCache = (cache: Partial<Record<string, PullRequestLoad>>) => {
 	const repositoryKeys = Object.keys(cache).filter((key) => key.startsWith("repository:"))
 	if (repositoryKeys.length <= MAX_REPOSITORY_CACHE_ENTRIES) return cache
 	const remove = new Set(repositoryKeys.slice(0, repositoryKeys.length - MAX_REPOSITORY_CACHE_ENTRIES))
 	return Object.fromEntries(Object.entries(cache).filter(([key]) => !remove.has(key))) as Partial<Record<string, PullRequestLoad>>
+}
+
+const trimIssueLoadCache = (cache: Partial<Record<string, IssueLoad>>) => {
+	const repositoryKeys = Object.keys(cache).filter((key) => key.startsWith("repository:"))
+	if (repositoryKeys.length <= MAX_REPOSITORY_CACHE_ENTRIES) return cache
+	const remove = new Set(repositoryKeys.slice(0, repositoryKeys.length - MAX_REPOSITORY_CACHE_ENTRIES))
+	return Object.fromEntries(Object.entries(cache).filter(([key]) => !remove.has(key))) as Partial<Record<string, IssueLoad>>
 }
 const pullRequestsAtom = githubRuntime.atom(
 	GitHubService.use((github) =>
@@ -173,6 +201,46 @@ const pullRequestsAtom = githubRuntime.atom(
 		})
 	),
 ).pipe(Atom.keepAlive)
+const issuesAtom = githubRuntime.atom(
+	GitHubService.use((github) =>
+		Effect.gen(function*() {
+			const view = yield* Atom.get(activeIssueViewAtom)
+			const queueMode = issueViewMode(view)
+			const repository = issueViewRepository(view)
+			const cacheKey = issueViewCacheKey(view)
+			const page = yield* github.listOpenIssuePage({
+				mode: queueMode,
+				repository,
+				cursor: null,
+				pageSize: Math.min(pullRequestPageSize, config.prFetchLimit),
+			}).pipe(
+					Effect.tapError(() =>
+						Atom.update(retryProgressAtom, (current) => RetryProgress.Retrying({
+							attempt: Math.min(RetryProgress.$match(current, { Idle: () => 0, Retrying: ({ attempt }) => attempt }) + 1, PR_FETCH_RETRIES),
+							max: PR_FETCH_RETRIES,
+						}))
+					),
+					Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2) }),
+					Effect.tapError(() => Atom.set(retryProgressAtom, initialRetryProgress)),
+				)
+
+			yield* Atom.set(retryProgressAtom, initialRetryProgress)
+			const cache = yield* Atom.get(issueLoadCacheAtom)
+			const load = {
+				view,
+				data: page.items,
+				fetchedAt: new Date(),
+				endCursor: page.endCursor,
+				hasNextPage: page.hasNextPage && page.items.length < config.prFetchLimit,
+			} satisfies IssueLoad
+			const nextCache = { ...cache }
+			delete nextCache[cacheKey]
+			nextCache[cacheKey] = load
+			yield* Atom.set(issueLoadCacheAtom, trimIssueLoadCache(nextCache))
+			return load
+		})
+	),
+).pipe(Atom.keepAlive)
 const selectedIndexAtom = Atom.make(0)
 const noticeAtom = Atom.make<string | null>(null)
 const filterQueryAtom = Atom.make("")
@@ -196,7 +264,9 @@ const activeModalAtom = Atom.make<Modal>(initialModal)
 const themeIdAtom = Atom.make<ThemeId>(initialThemeId).pipe(Atom.keepAlive)
 const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}).pipe(Atom.keepAlive)
 const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
+const issueOverridesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
 const recentlyCompletedPullRequestsAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
+const recentlyCompletedIssuesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
 const usernameAtom = githubRuntime.atom(
 	config.author === "@me"
 		? GitHubService.use((github) => github.getAuthenticatedUser())
@@ -212,16 +282,39 @@ const pullRequestLoadAtom = Atom.make((get) => {
 	return cache[cacheKey] ?? (resolved && viewCacheKey(resolved.view) === cacheKey ? resolved : null)
 })
 
+const issueLoadAtom = Atom.make((get) => {
+	const view = get(activeIssueViewAtom)
+	const cacheKey = issueViewCacheKey(view)
+	const cache = get(issueLoadCacheAtom)
+	const result = get(issuesAtom)
+	const resolved = AsyncResult.getOrElse(result, () => null)
+	return cache[cacheKey] ?? (resolved && issueViewCacheKey(resolved.view) === cacheKey ? resolved : null)
+})
+
 const isLoadingQueueModeAtom = Atom.make((get) => {
 	const cacheKey = viewCacheKey(get(activeViewAtom))
 	const resolved = AsyncResult.getOrElse(get(pullRequestsAtom), () => null)
 	return resolved !== null && viewCacheKey(resolved.view) !== cacheKey
 })
 
+const isLoadingIssueQueueModeAtom = Atom.make((get) => {
+	const cacheKey = issueViewCacheKey(get(activeIssueViewAtom))
+	const resolved = AsyncResult.getOrElse(get(issuesAtom), () => null)
+	return resolved !== null && issueViewCacheKey(resolved.view) !== cacheKey
+})
+
 const pullRequestStatusAtom = Atom.make((get): LoadStatus => {
 	const result = get(pullRequestsAtom)
 	const load = get(pullRequestLoadAtom)
 	const isLoadingQueue = get(isLoadingQueueModeAtom)
+	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
+	return AsyncResult.isFailure(result) ? "error" : "ready"
+})
+
+const issueStatusAtom = Atom.make((get): LoadStatus => {
+	const result = get(issuesAtom)
+	const load = get(issueLoadAtom)
+	const isLoadingQueue = get(isLoadingIssueQueueModeAtom)
 	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
 	return AsyncResult.isFailure(result) ? "error" : "ready"
 })
@@ -242,6 +335,22 @@ const displayedPullRequestsAtom = Atom.make((get) => {
 	]
 })
 
+const displayedIssuesAtom = Atom.make((get) => {
+	const load = get(issueLoadAtom)
+	const overrides = get(issueOverridesAtom)
+	const recentlyCompleted = get(recentlyCompletedIssuesAtom)
+	const source = load?.data ?? []
+	const seenUrls = new Set<string>()
+	const open = source.map((issue) => {
+		seenUrls.add(issue.url)
+		return recentlyCompleted[issue.url] ?? overrides[issue.url] ?? issue
+	})
+	return [
+		...open,
+		...Object.values(recentlyCompleted).filter((issue) => !seenUrls.has(issue.url)),
+	]
+})
+
 const effectiveFilterQueryAtom = Atom.make((get) =>
 	(get(filterModeAtom) ? get(filterDraftAtom) : get(filterQueryAtom)).trim().toLowerCase(),
 )
@@ -258,6 +367,28 @@ const filteredPullRequestsAtom = Atom.make((get) => {
 	).map(({ pullRequest }) => pullRequest)
 })
 
+const filteredIssuesAtom = Atom.make((get) => {
+	const issues = get(displayedIssuesAtom)
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return issues
+	return issues.flatMap((issue) => {
+		const fields = [
+			issue.title.toLowerCase(),
+			issue.repository.toLowerCase(),
+			String(issue.number),
+			issue.author.toLowerCase(),
+			...issue.labels.map((label) => label.name.toLowerCase()),
+		]
+		const score = fields.flatMap((field, index) => {
+			const matchIndex = field.indexOf(query)
+			return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
+		})
+		return score.length > 0 ? [{ issue, score: Math.min(...score) }] : []
+	}).sort((left, right) =>
+		left.score - right.score || right.issue.updatedAt.getTime() - left.issue.updatedAt.getTime()
+	).map(({ issue }) => issue)
+})
+
 const visibleRepoOrderAtom = Atom.make((get) => {
 	const query = get(effectiveFilterQueryAtom)
 	if (query.length === 0) return [] as readonly string[]
@@ -268,10 +399,31 @@ const visibleGroupsAtom = Atom.make((get) =>
 	groupBy(get(filteredPullRequestsAtom), (pullRequest) => pullRequest.repository, get(visibleRepoOrderAtom)),
 )
 
+const visibleIssueRepoOrderAtom = Atom.make((get) => {
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return [] as readonly string[]
+	return [...new Set(get(filteredIssuesAtom).map((issue) => issue.repository))]
+})
+
+const visibleIssueGroupsAtom = Atom.make((get) =>
+	groupBy(get(filteredIssuesAtom), (issue) => issue.repository, get(visibleIssueRepoOrderAtom)),
+)
+
 const visiblePullRequestsAtom = Atom.make((get) => get(visibleGroupsAtom).flatMap(([, pullRequests]) => pullRequests))
+const visibleIssuesAtom = Atom.make((get) => get(visibleIssueGroupsAtom).flatMap(([, issues]) => issues))
 
 const groupStartsAtom = Atom.make((get) => {
 	const groups = get(visibleGroupsAtom)
+	const starts: number[] = []
+	for (let index = 0; index < groups.length; index++) {
+		if (index === 0) starts.push(0)
+		else starts.push(starts[index - 1]! + groups[index - 1]![1].length)
+	}
+	return starts
+})
+
+const issueGroupStartsAtom = Atom.make((get) => {
+	const groups = get(visibleIssueGroupsAtom)
 	const starts: number[] = []
 	for (let index = 0; index < groups.length; index++) {
 		if (index === 0) starts.push(0)
@@ -284,6 +436,12 @@ const selectedPullRequestAtom = Atom.make((get) => {
 	const pullRequests = get(visiblePullRequestsAtom)
 	const index = get(selectedIndexAtom)
 	return pullRequests[index] ?? null
+})
+
+const selectedIssueAtom = Atom.make((get) => {
+	const issues = get(visibleIssuesAtom)
+	const index = get(selectedIndexAtom)
+	return issues[index] ?? null
 })
 
 const selectedDiffKeyAtom = Atom.make((get) => {
@@ -303,9 +461,16 @@ const listRepoLabelsAtom = githubRuntime.fn<string>()((repository) =>
 const listOpenPullRequestPageAtom = githubRuntime.fn<ListPullRequestPageInput>()((input) =>
 	GitHubService.use((github) => github.listOpenPullRequestPage(input))
 )
+const listOpenIssuePageAtom = githubRuntime.fn<ListIssuePageInput>()((input) =>
+	GitHubService.use((github) => github.listOpenIssuePage(input))
+)
 const pullRequestDetailsAtom = Atom.family((key: string) => {
 	const { repository, number } = parsePullRequestDetailAtomKey(key)
 	return githubRuntime.atom(GitHubService.use((github) => github.getPullRequestDetails(repository, number)))
+})
+const issueDetailsAtom = Atom.family((key: string) => {
+	const { repository, number } = parseIssueDetailAtomKey(key)
+	return githubRuntime.atom(GitHubService.use((github) => github.getIssueDetails(repository, number)))
 })
 const addPullRequestLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.addPullRequestLabel(input.repository, input.number, input.label))
@@ -323,6 +488,9 @@ const pullRequestDiffAtom = Atom.family((key: string) => {
 const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestComments(input.repository, input.number))
 )
+const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listIssueComments(input.repository, input.number))
+)
 const getPullRequestMergeInfoAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.getPullRequestMergeInfo(input.repository, input.number))
 )
@@ -332,9 +500,25 @@ const mergePullRequestAtom = githubRuntime.fn<{ readonly repository: string; rea
 const closePullRequestAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.closePullRequest(input.repository, input.number))
 )
+const closeIssueAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.closeIssue(input.repository, input.number))
+)
+const reopenIssueAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.reopenIssue(input.repository, input.number))
+)
 const createPullRequestCommentAtom = githubRuntime.fn<CreatePullRequestCommentInput>()((input) => GitHubService.use((github) => github.createPullRequestComment(input)))
+const createIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly body: string }>()((input) =>
+	GitHubService.use((github) => github.createIssueComment(input.repository, input.number, input.body))
+)
 const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
 const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
+const openIssueInBrowserAtom = githubRuntime.fn<IssueItem>()((issue) => BrowserOpener.use((browser) => browser.openIssue(issue)))
+const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
+	GitHubService.use((github) => github.addIssueLabel(input.repository, input.number, input.label))
+)
+const removeIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
+	GitHubService.use((github) => github.removeIssueLabel(input.repository, input.number, input.label))
+)
 
 const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inner) / 2)
 
@@ -368,6 +552,18 @@ const pullRequestMetadataText = (pullRequest: PullRequestItem) => {
 	return lines.join("\n")
 }
 
+const issueMetadataText = (issue: IssueItem) => {
+	const lines = [
+		issue.title,
+		`${issue.repository} #${issue.number}`,
+		issue.url,
+		`state: ${issue.state}`,
+	]
+	if (issue.labels.length > 0) lines.push(`labels: ${issue.labels.map((label) => label.name).join(", ")}`)
+	if (issue.assignees.length > 0) lines.push(`assignees: ${issue.assignees.map((assignee) => `@${assignee}`).join(", ")}`)
+	return lines.join("\n")
+}
+
 const pullRequestDetailKey = (pullRequest: PullRequestItem) => `${pullRequest.url}:${pullRequest.headRefOid}`
 const pullRequestRevisionAtomKey = (pullRequest: PullRequestItem) => `${pullRequest.repository}\u0000${pullRequest.number}\u0000${pullRequest.headRefOid}`
 const parsePullRequestRevisionAtomKey = (key: string, label: string) => {
@@ -379,6 +575,13 @@ const pullRequestDetailAtomKey = pullRequestRevisionAtomKey
 const pullRequestDiffAtomKey = pullRequestRevisionAtomKey
 const parsePullRequestDetailAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "detail")
 const parsePullRequestDiffAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "diff")
+const issueDetailKey = (issue: IssueItem) => `${issue.repository}\u0000${issue.number}`
+const issueDetailAtomKey = issueDetailKey
+const parseIssueDetailAtomKey = (key: string) => {
+	const [repository, number] = key.split("\u0000")
+	if (!repository || !number) throw new Error(`Invalid issue detail key: ${key}`)
+	return { repository, number: Number.parseInt(number, 10) }
+}
 
 const isShiftG = (key: { readonly name: string; readonly shift?: boolean }) => key.name === "G" || key.name === "g" && key.shift
 
@@ -433,42 +636,46 @@ const setDiffCommentLineColor = (diff: DiffRenderable, entry: AppliedDiffLineCol
 }
 
 const getDetailPlaceholderContent = ({
+	surface,
 	status,
 	retryProgress,
 	loadingIndicator,
 	visibleCount,
 	filterText,
 }: DetailPlaceholderInput): DetailPlaceholderContent => {
+	const noun = surface === "issues" ? "issues" : "pull requests"
+	const singularNoun = surface === "issues" ? "issue" : "pull request"
+
 	if (status === "loading") {
 		return {
-			title: `${loadingIndicator} Loading pull requests`,
-			hint: retryProgress._tag === "Retrying" ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : "Fetching latest open PRs",
+			title: `${loadingIndicator} Loading ${noun}`,
+			hint: retryProgress._tag === "Retrying" ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : `Fetching latest open ${noun}`,
 		}
 	}
 
 	if (status === "error") {
 		return {
-			title: "Could not load pull requests",
+			title: `Could not load ${noun}`,
 			hint: "Press r to retry",
 		}
 	}
 
 	if (visibleCount === 0 && filterText.length > 0) {
 		return {
-			title: "No matching pull requests",
+			title: `No matching ${noun}`,
 			hint: "Press esc to clear the filter",
 		}
 	}
 
 	if (visibleCount === 0) {
 		return {
-			title: "No open pull requests",
+			title: `No open ${noun}`,
 			hint: "Press r to refresh",
 		}
 	}
 
 	return {
-		title: "Select a pull request",
+		title: `Select a ${singularNoun}`,
 		hint: "Use up/down to move",
 	}
 }
@@ -478,10 +685,16 @@ export const App = () => {
 	const { width, height } = useTerminalDimensions()
 	const registry = useContext(RegistryContext)
 	const pullRequestResult = useAtomValue(pullRequestsAtom)
+	const issueResult = useAtomValue(issuesAtom)
 	const refreshPullRequestsAtom = useAtomRefresh(pullRequestsAtom)
+	const refreshIssuesAtom = useAtomRefresh(issuesAtom)
+	const [activeSurface, setActiveSurface] = useAtom(activeSurfaceAtom)
 	const [activeView, setActiveView] = useAtom(activeViewAtom)
+	const [activeIssueView, setActiveIssueView] = useAtom(activeIssueViewAtom)
 	const setQueueLoadCache = useAtomSet(queueLoadCacheAtom)
+	const setIssueLoadCache = useAtomSet(issueLoadCacheAtom)
 	const setQueueSelection = useAtomSet(queueSelectionAtom)
+	const setIssueSelection = useAtomSet(issueSelectionAtom)
 	const [selectedIndex, setSelectedIndex] = useAtom(selectedIndexAtom)
 	const [notice, setNotice] = useAtom(noticeAtom)
 	const [filterQuery, setFilterQuery] = useAtom(filterQueryAtom)
@@ -544,7 +757,9 @@ export const App = () => {
 	themeModalRef.current = themeModal
 	const setLabelCache = useAtomSet(labelCacheAtom)
 	const setPullRequestOverrides = useAtomSet(pullRequestOverridesAtom)
+	const setIssueOverrides = useAtomSet(issueOverridesAtom)
 	const setRecentlyCompletedPullRequests = useAtomSet(recentlyCompletedPullRequestsAtom)
+	const setRecentlyCompletedIssues = useAtomSet(recentlyCompletedIssuesAtom)
 	const retryProgress = useAtomValue(retryProgressAtom)
 	const [loadingFrame, setLoadingFrame] = useState(0)
 	const [refreshCompletionMessage, setRefreshCompletionMessage] = useState<string | null>(null)
@@ -554,16 +769,24 @@ export const App = () => {
 	const usernameResult = useAtomValue(usernameAtom)
 	const loadRepoLabels = useAtomSet(listRepoLabelsAtom, { mode: "promise" })
 	const loadPullRequestPage = useAtomSet(listOpenPullRequestPageAtom, { mode: "promise" })
+	const loadIssuePage = useAtomSet(listOpenIssuePageAtom, { mode: "promise" })
 	const addPullRequestLabel = useAtomSet(addPullRequestLabelAtom, { mode: "promise" })
 	const removePullRequestLabel = useAtomSet(removePullRequestLabelAtom, { mode: "promise" })
+	const addIssueLabel = useAtomSet(addIssueLabelAtom, { mode: "promise" })
+	const removeIssueLabel = useAtomSet(removeIssueLabelAtom, { mode: "promise" })
 	const toggleDraftStatus = useAtomSet(toggleDraftAtom, { mode: "promise" })
 	const listPullRequestComments = useAtomSet(listPullRequestCommentsAtom, { mode: "promise" })
+	const listIssueComments = useAtomSet(listIssueCommentsAtom, { mode: "promise" })
 	const getPullRequestMergeInfo = useAtomSet(getPullRequestMergeInfoAtom, { mode: "promise" })
 	const mergePullRequest = useAtomSet(mergePullRequestAtom, { mode: "promise" })
 	const closePullRequest = useAtomSet(closePullRequestAtom, { mode: "promise" })
+	const closeIssue = useAtomSet(closeIssueAtom, { mode: "promise" })
+	const reopenIssueAction = useAtomSet(reopenIssueAtom, { mode: "promise" })
 	const createPullRequestComment = useAtomSet(createPullRequestCommentAtom, { mode: "promise" })
+	const createIssueComment = useAtomSet(createIssueCommentAtom, { mode: "promise" })
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
+	const openIssueInBrowser = useAtomSet(openIssueInBrowserAtom, { mode: "promise" })
 	const terminalWidth = width ?? 100
 	const terminalHeight = height ?? 24
 	const contentWidth = Math.max(1, terminalWidth)
@@ -584,12 +807,17 @@ export const App = () => {
 	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
 	const refreshGenerationRef = useRef(0)
 	const didMountQueueModeRef = useRef(false)
+	const didMountIssueQueueModeRef = useRef(false)
 	const lastPullRequestRefreshAtRef = useRef(0)
+	const lastIssueRefreshAtRef = useRef(0)
 	const terminalFocusedRef = useRef(true)
 	const terminalWasBlurredRef = useRef(false)
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
+	const issueStatusRef = useRef<LoadStatus>("loading")
 	const refreshPullRequestsRef = useRef<(message?: string) => void>(() => {})
+	const refreshIssuesRef = useRef<(message?: string) => void>(() => {})
 	const maybeRefreshPullRequestsRef = useRef<(minimumAgeMs: number) => void>(() => {})
+	const maybeRefreshIssuesRef = useRef<(minimumAgeMs: number) => void>(() => {})
 	const detailScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const detailPreviewScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
@@ -631,24 +859,40 @@ export const App = () => {
 	}, [])
 
 	const pullRequestLoad = useAtomValue(pullRequestLoadAtom)
+	const issueLoad = useAtomValue(issueLoadAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
+	const issues = useAtomValue(displayedIssuesAtom)
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
-	const isInitialLoading = pullRequestStatus === "loading" && pullRequests.length === 0
+	const issueStatus = useAtomValue(issueStatusAtom)
+	const activeStatus = activeSurface === "issues" ? issueStatus : pullRequestStatus
+	const isInitialLoading = activeSurface === "issues" ? issueStatus === "loading" && issues.length === 0 : pullRequestStatus === "loading" && pullRequests.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
+	const issueError = AsyncResult.isFailure(issueResult) ? errorMessage(Cause.squash(issueResult.cause)) : null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
+	issueStatusRef.current = issueStatus
 
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
 
 	const visibleGroups = useAtomValue(visibleGroupsAtom)
+	const visibleIssueGroups = useAtomValue(visibleIssueGroupsAtom)
 	const visiblePullRequests = useAtomValue(visiblePullRequestsAtom)
+	const visibleIssues = useAtomValue(visibleIssuesAtom)
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
+	const selectedIssue = useAtomValue(selectedIssueAtom)
 	const selectedRepository = viewRepository(activeView)
+	const selectedIssueRepository = issueViewRepository(activeIssueView)
+	const activeRepository = activeSurface === "issues" ? selectedIssueRepository : selectedRepository
 	const activeViews = activePullRequestViews(activeView)
+	const activeIssueViewList = activeIssueViews(activeIssueView)
 	const currentQueueCacheKey = viewCacheKey(activeView)
+	const currentIssueQueueCacheKey = issueViewCacheKey(activeIssueView)
 	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
+	const loadedIssueCount = issueLoad?.data.length ?? 0
 	const hasMorePullRequests = Boolean(pullRequestLoad?.hasNextPage && loadedPullRequestCount < config.prFetchLimit)
+	const hasMoreIssues = Boolean(issueLoad?.hasNextPage && loadedIssueCount < config.prFetchLimit)
 	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
+	const isLoadingMoreIssues = loadingMoreKey === `issue:${currentIssueQueueCacheKey}`
 	const pullRequestListRows = useMemo(() => buildPullRequestListRows({
 		groups: visibleGroups,
 		status: pullRequestStatus,
@@ -660,6 +904,17 @@ export const App = () => {
 		isLoadingMore: isLoadingMorePullRequests,
 	}), [visibleGroups, pullRequestStatus, pullRequestError, visibleFilterText, filterMode, filterQuery, loadedPullRequestCount, hasMorePullRequests, isLoadingMorePullRequests])
 	const selectedPullRequestRowIndex = pullRequestListRowIndex(pullRequestListRows, selectedPullRequest?.url ?? null)
+	const issueListRows = useMemo(() => buildIssueListRows({
+		groups: visibleIssueGroups,
+		status: issueStatus,
+		error: issueError,
+		filterText: visibleFilterText,
+		showFilterBar: filterMode || filterQuery.length > 0,
+		loadedCount: loadedIssueCount,
+		hasMore: hasMoreIssues,
+		isLoadingMore: isLoadingMoreIssues,
+	}), [visibleIssueGroups, issueStatus, issueError, visibleFilterText, filterMode, filterQuery, loadedIssueCount, hasMoreIssues, isLoadingMoreIssues])
+	const selectedIssueRowIndex = issueListRowIndex(issueListRows, selectedIssue?.url ?? null)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
@@ -678,23 +933,28 @@ export const App = () => {
 		[diffCommentAnchors],
 	)
 	const groupStarts = useAtomValue(groupStartsAtom)
-	const getCurrentGroupIndex = (current: number) => {
-		if (groupStarts.length === 0) return 0
+	const issueGroupStarts = useAtomValue(issueGroupStartsAtom)
+	const activeVisibleCount = activeSurface === "issues" ? visibleIssues.length : visiblePullRequests.length
+	const activeGroupStarts = activeSurface === "issues" ? issueGroupStarts : groupStarts
+	const getCurrentGroupIndex = (current: number, starts: readonly number[]) => {
+		if (starts.length === 0) return 0
 		let low = 0
-		let high = groupStarts.length - 1
+		let high = starts.length - 1
 		while (low < high) {
 			const mid = (low + high + 1) >>> 1
-			if (groupStarts[mid]! <= current) low = mid
+			if (starts[mid]! <= current) low = mid
 			else high = mid - 1
 		}
 		return low
 	}
-	const summaryRight = pullRequestLoad?.fetchedAt
-		? `updated ${formatShortDate(pullRequestLoad.fetchedAt)} ${formatTimestamp(pullRequestLoad.fetchedAt)}`
-		: pullRequestStatus === "loading"
-			? "loading pull requests..."
+	const activeLoadFetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt : pullRequestLoad?.fetchedAt
+	const summaryRight = activeLoadFetchedAt
+		? `updated ${formatShortDate(activeLoadFetchedAt)} ${formatTimestamp(activeLoadFetchedAt)}`
+		: activeStatus === "loading"
+			? activeSurface === "issues" ? "loading issues..." : "loading pull requests..."
 			: ""
-	const headerLeft = username ? `GHUI  ${username}  ${viewLabel(activeView)}` : `GHUI  ${viewLabel(activeView)}`
+	const activeViewLabel = activeSurface === "issues" ? `issues  ${issueViewLabel(activeIssueView)}` : `pull requests  ${viewLabel(activeView)}`
+	const headerLeft = username ? `GHUI  ${username}  ${activeViewLabel}` : `GHUI  ${activeViewLabel}`
 	const headerLine = `${fitCell(headerLeft, Math.max(0, headerFooterWidth - summaryRight.length))}${summaryRight}`
 	const footerNotice = notice ? fitCell(notice, headerFooterWidth) : null
 	const selectPullRequestByUrl = (url: string) => {
@@ -704,10 +964,22 @@ export const App = () => {
 			setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: index }))
 		}
 	}
+	const selectIssueByUrl = (url: string) => {
+		const index = visibleIssues.findIndex((issue) => issue.url === url)
+		if (index >= 0) {
+			setSelectedIndex(index)
+			setIssueSelection((current) => ({ ...current, [currentIssueQueueCacheKey]: index }))
+		}
+	}
 	const updatePullRequest = (url: string, transform: (pullRequest: PullRequestItem) => PullRequestItem) => {
 		const pullRequest = pullRequests.find((item) => item.url === url)
 		if (!pullRequest) return
 		setPullRequestOverrides((current) => ({ ...current, [url]: transform(pullRequest) }))
+	}
+	const updateIssue = (url: string, transform: (issue: IssueItem) => IssueItem) => {
+		const issue = issues.find((item) => item.url === url)
+		if (!issue) return
+		setIssueOverrides((current) => ({ ...current, [url]: transform(issue) }))
 	}
 	const refreshPullRequests = (message?: string) => {
 		refreshGenerationRef.current += 1
@@ -723,6 +995,39 @@ export const App = () => {
 		refreshPullRequestsAtom()
 	}
 	refreshPullRequestsRef.current = refreshPullRequests
+	const refreshIssues = (message?: string) => {
+		refreshGenerationRef.current += 1
+		setLoadingMoreKey(null)
+		setIssueOverrides({})
+		if (message) {
+			setNotice(null)
+			setRefreshCompletionMessage(message)
+			setRefreshStartedAt(lastIssueRefreshAtRef.current)
+		}
+		refreshIssuesAtom()
+	}
+	refreshIssuesRef.current = refreshIssues
+	const showPullRequests = () => {
+		if (activeSurface === "pullRequests") return
+		setIssueSelection((current) => ({ ...current, [currentIssueQueueCacheKey]: selectedIndex }))
+		setActiveSurface("pullRequests")
+		setSelectedIndex(registry.get(queueSelectionAtom)[currentQueueCacheKey] ?? 0)
+		setDetailFullView(false)
+		setDiffFullView(false)
+		setFilterDraft(filterQuery)
+		setNotice(null)
+	}
+	const showIssues = () => {
+		if (activeSurface === "issues") return
+		setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
+		setActiveSurface("issues")
+		setSelectedIndex(registry.get(issueSelectionAtom)[currentIssueQueueCacheKey] ?? 0)
+		setDetailFullView(false)
+		setDiffFullView(false)
+		setDiffCommentMode(false)
+		setFilterDraft(filterQuery)
+		setNotice(null)
+	}
 	const switchViewTo = (view: PullRequestView) => {
 		if (viewEquals(view, activeView)) return
 		refreshGenerationRef.current += 1
@@ -741,8 +1046,25 @@ export const App = () => {
 		setRefreshCompletionMessage(null)
 		setRefreshStartedAt(null)
 	}
+	const switchIssueViewTo = (view: IssueView) => {
+		if (issueViewEquals(view, activeIssueView)) return
+		refreshGenerationRef.current += 1
+		setIssueSelection((current) => ({ ...current, [currentIssueQueueCacheKey]: selectedIndex }))
+		setActiveIssueView(view)
+		setSelectedIndex(registry.get(issueSelectionAtom)[issueViewCacheKey(view)] ?? 0)
+		setRecentlyCompletedIssues({})
+		setLoadingMoreKey(null)
+		setDetailFullView(false)
+		setDiffFullView(false)
+		setDiffCommentMode(false)
+		setFilterDraft(filterQuery)
+		setNotice(null)
+		setRefreshCompletionMessage(null)
+		setRefreshStartedAt(null)
+	}
 	const switchQueueMode = (delta: 1 | -1) => {
-		switchViewTo(nextView(activeView, activeViews, delta))
+		if (activeSurface === "issues") switchIssueViewTo(nextIssueView(activeIssueView, activeIssueViewList, delta))
+		else switchViewTo(nextView(activeView, activeViews, delta))
 	}
 	const loadMorePullRequests = () => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
@@ -779,6 +1101,42 @@ export const App = () => {
 		})
 		return true
 	}
+	const loadMoreIssues = () => {
+		if (!issueLoad || !hasMoreIssues || isLoadingMoreIssues || !issueLoad.endCursor) return false
+		const remaining = config.prFetchLimit - issueLoad.data.length
+		if (remaining <= 0) return false
+		const cacheKey = currentIssueQueueCacheKey
+		const loadingKey = `issue:${cacheKey}`
+		const generation = refreshGenerationRef.current
+		setLoadingMoreKey(loadingKey)
+		void loadIssuePage({
+			mode: issueViewMode(activeIssueView),
+			repository: selectedIssueRepository,
+			cursor: issueLoad.endCursor,
+			pageSize: Math.min(pullRequestPageSize, remaining),
+		}).then((page) => {
+			if (generation !== refreshGenerationRef.current) return
+			setIssueLoadCache((current) => {
+				const load = current[cacheKey]
+				if (!load) return current
+				const data = appendIssuePage(load.data, page.items)
+				return {
+					...current,
+					[cacheKey]: {
+						...load,
+						data,
+						endCursor: page.endCursor,
+						hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+					},
+				}
+			})
+		}).catch((error) => {
+			flashNotice(errorMessage(error))
+		}).finally(() => {
+			setLoadingMoreKey((current) => current === loadingKey ? null : current)
+		})
+		return true
+	}
 	const applyPullRequestDetail = (detail: PullRequestItem) => {
 		setQueueLoadCache((current) => {
 			const next = { ...current }
@@ -789,6 +1147,22 @@ export const App = () => {
 				if (index < 0) continue
 				const data = [...load.data]
 				data[index] = detail
+				changed = true
+				next[cacheKey] = { ...load, data }
+			}
+			return changed ? next : current
+		})
+	}
+	const applyIssueDetail = (detail: IssueItem) => {
+		setIssueLoadCache((current) => {
+			const next = { ...current }
+			let changed = false
+			for (const [cacheKey, load] of Object.entries(current)) {
+				if (!load) continue
+				const index = load.data.findIndex((issue) => issue.url === detail.url)
+				if (index < 0) continue
+				const data = [...load.data]
+				data[index] = { ...data[index]!, ...detail, timeline: detail.timeline.length > 0 ? detail.timeline : data[index]!.timeline }
 				changed = true
 				next[cacheKey] = { ...load, data }
 			}
@@ -817,11 +1191,59 @@ export const App = () => {
 		})
 		return true
 	}
+	const hydrateIssueDetails = (issue: IssueItem, notifyError: boolean) => {
+		if (issue.detailLoaded) return false
+		const detailKey = issueDetailKey(issue)
+		const existing = detailHydrationRef.current.get(detailKey)
+		if (existing) {
+			if (notifyError) existing.notifyError = true
+			return false
+		}
+		const entry: DetailHydration = { token: Symbol(detailKey), notifyError }
+		detailHydrationRef.current.set(detailKey, entry)
+		const generation = refreshGenerationRef.current
+		const atom = issueDetailsAtom(issueDetailAtomKey(issue))
+		void Effect.runPromise(AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true })).then((detail) => {
+			if (generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) applyIssueDetail(detail)
+		}).catch((error) => {
+			if (entry.notifyError && generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) flashNotice(errorMessage(error))
+		}).finally(() => {
+			if (detailHydrationRef.current.get(detailKey) === entry) detailHydrationRef.current.delete(detailKey)
+		})
+		return true
+	}
+	const hydrateIssueComments = (issue: IssueItem, notifyError: boolean) => {
+		if (issue.comments === 0 || issue.timeline.length >= issue.comments) return false
+		const detailKey = `${issueDetailKey(issue)}:comments`
+		const existing = detailHydrationRef.current.get(detailKey)
+		if (existing) {
+			if (notifyError) existing.notifyError = true
+			return false
+		}
+		const entry: DetailHydration = { token: Symbol(detailKey), notifyError }
+		detailHydrationRef.current.set(detailKey, entry)
+		const generation = refreshGenerationRef.current
+		void listIssueComments({ repository: issue.repository, number: issue.number }).then((comments) => {
+			if (generation !== refreshGenerationRef.current || detailHydrationRef.current.get(detailKey) !== entry) return
+			updateIssue(issue.url, (current) => ({ ...current, timeline: comments, comments: Math.max(current.comments, comments.length) }))
+		}).catch((error) => {
+			if (entry.notifyError && generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) flashNotice(errorMessage(error))
+		}).finally(() => {
+			if (detailHydrationRef.current.get(detailKey) === entry) detailHydrationRef.current.delete(detailKey)
+		})
+		return true
+	}
 	maybeRefreshPullRequestsRef.current = (minimumAgeMs) => {
 		if (!terminalFocusedRef.current || pullRequestStatusRef.current === "loading") return
 		const lastRefreshAt = lastPullRequestRefreshAtRef.current
 		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
 		refreshPullRequestsRef.current()
+	}
+	maybeRefreshIssuesRef.current = (minimumAgeMs) => {
+		if (!terminalFocusedRef.current || issueStatusRef.current === "loading") return
+		const lastRefreshAt = lastIssueRefreshAtRef.current
+		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
+		refreshIssuesRef.current()
 	}
 
 	useEffect(() => {
@@ -830,6 +1252,13 @@ export const App = () => {
 			lastPullRequestRefreshAtRef.current = fetchedAt
 		}
 	}, [pullRequestLoad?.fetchedAt])
+
+	useEffect(() => {
+		const fetchedAt = issueLoad?.fetchedAt?.getTime()
+		if (fetchedAt !== undefined) {
+			lastIssueRefreshAtRef.current = fetchedAt
+		}
+	}, [issueLoad?.fetchedAt])
 
 	useEffect(() => {
 		if (!didMountQueueModeRef.current) {
@@ -841,26 +1270,38 @@ export const App = () => {
 	}, [currentQueueCacheKey, refreshPullRequestsAtom, registry])
 
 	useEffect(() => {
+		if (!didMountIssueQueueModeRef.current) {
+			didMountIssueQueueModeRef.current = true
+			return
+		}
+		if (registry.get(issueLoadCacheAtom)[currentIssueQueueCacheKey]) return
+		refreshIssuesAtom()
+	}, [currentIssueQueueCacheKey, refreshIssuesAtom, registry])
+
+	useEffect(() => {
 		if (!refreshCompletionMessage || refreshStartedAt === null) return
-		const fetchedAt = pullRequestLoad?.fetchedAt?.getTime()
-		const isHydratingDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
-		if (pullRequestStatus === "ready" && fetchedAt !== undefined && fetchedAt !== refreshStartedAt && !isHydratingDetails) {
+		const fetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt?.getTime() : pullRequestLoad?.fetchedAt?.getTime()
+		const isHydratingDetails = activeSurface === "issues"
+			? issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssue.timeline.length < selectedIssue.comments)
+			: pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
+		if (activeStatus === "ready" && fetchedAt !== undefined && fetchedAt !== refreshStartedAt && !isHydratingDetails) {
 			flashNotice(`✓ ${refreshCompletionMessage}`)
 			setRefreshCompletionMessage(null)
 			setRefreshStartedAt(null)
-		} else if (pullRequestStatus === "error") {
+		} else if (activeStatus === "error") {
 			flashNotice("Refresh failed")
 			setRefreshCompletionMessage(null)
 			setRefreshStartedAt(null)
 		}
-	}, [refreshCompletionMessage, refreshStartedAt, pullRequestStatus, pullRequestLoad?.fetchedAt, pullRequests])
+	}, [refreshCompletionMessage, refreshStartedAt, activeStatus, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, pullRequests, issues])
 
 	useEffect(() => {
 		const handleFocus = () => {
 			terminalFocusedRef.current = true
 			setTerminalFocused(true)
 			if (terminalWasBlurredRef.current) {
-				maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
+				if (activeSurface === "issues") maybeRefreshIssuesRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
+				else maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
 			}
 		}
 		const handleBlur = () => {
@@ -875,44 +1316,58 @@ export const App = () => {
 			renderer.off("focus", handleFocus)
 			renderer.off("blur", handleBlur)
 		}
-	}, [renderer])
+	}, [renderer, activeSurface])
 
 	useEffect(() => {
 		if (!terminalFocused) return
-		const lastRefreshAt = lastPullRequestRefreshAtRef.current || Date.now()
+		const lastRefreshAt = (activeSurface === "issues" ? lastIssueRefreshAtRef.current : lastPullRequestRefreshAtRef.current) || Date.now()
 		const ageMs = Date.now() - lastRefreshAt
 		const delayMs = Math.max(0, FOCUSED_IDLE_REFRESH_MS - ageMs) + Math.floor(Math.random() * AUTO_REFRESH_JITTER_MS)
 		const timeout = globalThis.setTimeout(() => {
-			maybeRefreshPullRequestsRef.current(FOCUSED_IDLE_REFRESH_MS)
+			if (activeSurface === "issues") maybeRefreshIssuesRef.current(FOCUSED_IDLE_REFRESH_MS)
+			else maybeRefreshPullRequestsRef.current(FOCUSED_IDLE_REFRESH_MS)
 		}, delayMs)
 		return () => globalThis.clearTimeout(timeout)
-	}, [terminalFocused, pullRequestLoad?.fetchedAt])
+	}, [terminalFocused, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt])
 
 	useEffect(() => {
 		setSelectedIndex((current) => {
-			if (visiblePullRequests.length === 0) return 0
-			return Math.max(0, Math.min(current, visiblePullRequests.length - 1))
+			const visibleCount = activeSurface === "issues" ? visibleIssues.length : visiblePullRequests.length
+			if (visibleCount === 0) return 0
+			return Math.max(0, Math.min(current, visibleCount - 1))
 		})
-	}, [visiblePullRequests.length])
+	}, [activeSurface, visiblePullRequests.length, visibleIssues.length])
 
 	useEffect(() => {
-		setQueueSelection((current) => current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex })
-	}, [currentQueueCacheKey, selectedIndex])
+		if (activeSurface === "issues") {
+			setIssueSelection((current) => current[currentIssueQueueCacheKey] === selectedIndex ? current : { ...current, [currentIssueQueueCacheKey]: selectedIndex })
+		} else {
+			setQueueSelection((current) => current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex })
+		}
+	}, [activeSurface, currentQueueCacheKey, currentIssueQueueCacheKey, selectedIndex])
 
 	useEffect(() => {
-		if (filterMode || filterQuery.length > 0 || visiblePullRequests.length === 0) return
-		const thresholdIndex = Math.max(0, visiblePullRequests.length - LOAD_MORE_SELECTION_THRESHOLD)
-		if (selectedIndex >= thresholdIndex) loadMorePullRequests()
-	}, [selectedIndex, visiblePullRequests.length, filterMode, filterQuery, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
+		if (filterMode || filterQuery.length > 0) return
+		if (activeSurface === "issues") {
+			if (visibleIssues.length === 0) return
+			const thresholdIndex = Math.max(0, visibleIssues.length - LOAD_MORE_SELECTION_THRESHOLD)
+			if (selectedIndex >= thresholdIndex) loadMoreIssues()
+		} else {
+			if (visiblePullRequests.length === 0) return
+			const thresholdIndex = Math.max(0, visiblePullRequests.length - LOAD_MORE_SELECTION_THRESHOLD)
+			if (selectedIndex >= thresholdIndex) loadMorePullRequests()
+		}
+	}, [activeSurface, selectedIndex, visiblePullRequests.length, visibleIssues.length, filterMode, filterQuery, hasMorePullRequests, hasMoreIssues, isLoadingMorePullRequests, isLoadingMoreIssues, currentQueueCacheKey, currentIssueQueueCacheKey])
 
 	useEffect(() => {
 		const scroll = prListScrollRef.current
-		if (!scroll || selectedPullRequestRowIndex === null) return
+		const rowIndex = activeSurface === "issues" ? selectedIssueRowIndex : selectedPullRequestRowIndex
+		if (!scroll || rowIndex === null) return
 		const viewportHeight = scroll.viewport.height
 		if (viewportHeight <= 0) return
-		const nextTop = scrollTopForVisibleLine(scroll.scrollTop, viewportHeight, selectedPullRequestRowIndex, 2)
+		const nextTop = scrollTopForVisibleLine(scroll.scrollTop, viewportHeight, rowIndex, 2)
 		if (nextTop !== scroll.scrollTop) scroll.scrollTo({ x: 0, y: nextTop })
-	}, [selectedPullRequestRowIndex])
+	}, [activeSurface, selectedPullRequestRowIndex, selectedIssueRowIndex])
 
 	useEffect(() => {
 		setDiffFileIndex(0)
@@ -976,8 +1431,11 @@ export const App = () => {
 		diffCommentLineColorsRef.current = { contextKey: diffLineColorContextKey, entries: nextEntries }
 	}, [diffCommentMode, selectedDiffCommentAnchor?.renderLine, selectedDiffCommentAnchor?.localRenderLine, selectedDiffCommentAnchor?.side, selectedDiffCommentAnchor?.fileIndex, diffLineColorContextKey, effectiveDiffRenderView, diffCommentAnchors, diffCommentThreads])
 	const isHydratingPullRequestDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
+	const isHydratingIssueDetails = issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssue.timeline.length < selectedIssue.comments)
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
-	const hasActiveLoadingIndicator = pullRequestResult.waiting || isHydratingPullRequestDetails || labelModal.loading || closeModal.running || mergeModal.loading || mergeModal.running || selectedDiffState?._tag === "Loading"
+	const isRefreshingIssues = issueResult.waiting && issueLoad !== null
+	const hasActiveLoadingIndicator = (activeSurface === "issues" ? issueResult.waiting || isHydratingIssueDetails : pullRequestResult.waiting || isHydratingPullRequestDetails)
+		|| labelModal.loading || closeModal.running || mergeModal.loading || mergeModal.running || selectedDiffState?._tag === "Loading"
 	const loadingIndicator = LOADING_FRAMES[loadingFrame % LOADING_FRAMES.length]!
 
 	useEffect(() => {
@@ -994,8 +1452,14 @@ export const App = () => {
 	}, [pullRequestStatus, selectedPullRequest?.url, selectedPullRequest?.headRefOid, selectedPullRequest?.state, selectedPullRequest?.detailLoaded, selectedPullRequest?.repository, selectedPullRequest?.number])
 
 	useEffect(() => {
+		if (issueStatus !== "ready" || !selectedIssue) return
+		hydrateIssueDetails(selectedIssue, true)
+		hydrateIssueComments(selectedIssue, true)
+	}, [issueStatus, selectedIssue?.url, selectedIssue?.detailLoaded, selectedIssue?.comments, selectedIssue?.timeline.length, selectedIssue?.repository, selectedIssue?.number])
+
+	useEffect(() => {
 		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
-		if (pullRequestStatus !== "ready" || visiblePullRequests.length === 0) return
+		if (activeSurface !== "pullRequests" || pullRequestStatus !== "ready" || visiblePullRequests.length === 0) return
 		detailPrefetchTimeoutRef.current = globalThis.setTimeout(() => {
 			detailPrefetchTimeoutRef.current = null
 			let started = 0
@@ -1012,21 +1476,28 @@ export const App = () => {
 		return () => {
 			if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
 		}
-	}, [pullRequestStatus, currentQueueCacheKey, selectedIndex, visiblePullRequests])
+	}, [activeSurface, pullRequestStatus, currentQueueCacheKey, selectedIndex, visiblePullRequests])
 
 	const detailPlaceholderContent = getDetailPlaceholderContent({
-		status: pullRequestStatus,
+		surface: activeSurface,
+		status: activeStatus,
 		retryProgress,
 		loadingIndicator,
-		visibleCount: visiblePullRequests.length,
+		visibleCount: activeVisibleCount,
 		filterText: visibleFilterText,
 	})
 	const isSelectedPullRequestDetailLoading = selectedPullRequest !== null && !selectedPullRequest.detailLoaded
+	const isSelectedIssueDetailLoading = selectedIssue !== null && !selectedIssue.detailLoaded
 	const detailLoadingContent: DetailPlaceholderContent = selectedPullRequest ? {
 		title: `${loadingIndicator} Loading pull request details`,
 		hint: `${selectedPullRequest.repository} #${selectedPullRequest.number}`,
 	} : detailPlaceholderContent
+	const issueDetailLoadingContent: DetailPlaceholderContent = selectedIssue ? {
+		title: `${loadingIndicator} Loading issue details`,
+		hint: `${selectedIssue.repository} #${selectedIssue.number}`,
+	} : detailPlaceholderContent
 	const detailJunctions = isSelectedPullRequestDetailLoading ? [] : getDetailJunctionRows(selectedPullRequest, rightPaneWidth, true)
+	const issueDetailJunctions = isSelectedIssueDetailLoading ? [] : getIssueDetailJunctionRows(selectedIssue, rightPaneWidth)
 
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
@@ -1099,7 +1570,7 @@ export const App = () => {
 	}
 
 	useEffect(() => {
-		if (!selectedPullRequest || diffFullView) return
+		if (activeSurface !== "pullRequests" || !selectedPullRequest || diffFullView) return
 		if (diffPrefetchTimeoutRef.current !== null) {
 			clearTimeout(diffPrefetchTimeoutRef.current)
 		}
@@ -1112,7 +1583,7 @@ export const App = () => {
 				diffPrefetchTimeoutRef.current = null
 			}
 		}
-	}, [selectedIndex, selectedPullRequest?.url, diffFullView])
+	}, [activeSurface, selectedIndex, selectedPullRequest?.url, diffFullView])
 
 	const openDiffView = () => {
 		if (!selectedPullRequest) return
@@ -1268,6 +1739,12 @@ export const App = () => {
 		setCommentModal(initialCommentModalState)
 	}
 
+	const openIssueCommentModal = () => {
+		if (!selectedIssue || selectedIssue.state !== "open") return
+		hydrateIssueComments(selectedIssue, false)
+		setCommentModal(initialCommentModalState)
+	}
+
 	const openDiffCommentThreadModal = () => {
 		if (!selectedDiffCommentAnchor || selectedDiffCommentThread.length === 0) return
 		setCommentThreadModal({ scrollOffset: 0 })
@@ -1333,9 +1810,61 @@ export const App = () => {
 		})
 	}
 
+	const submitIssueComment = () => {
+		if (!selectedIssue) return
+		const body = commentModal.body.trim()
+		if (body.length === 0) {
+			setCommentModal((current) => ({ ...current, error: "Write a comment before saving." }))
+			return
+		}
+
+		const targetIssue = selectedIssue
+		const previousIssue = targetIssue
+		const optimisticComment = {
+			id: `local:${Date.now()}`,
+			author: username ?? "you",
+			body,
+			createdAt: new Date(),
+			updatedAt: null,
+			url: null,
+		} satisfies IssueComment
+
+		updateIssue(targetIssue.url, (issue) => ({
+			...issue,
+			comments: issue.comments + 1,
+			timeline: [...issue.timeline, optimisticComment],
+		}))
+		closeActiveModal()
+		flashNotice(`Commenting on #${targetIssue.number}`)
+		void createIssueComment({ repository: targetIssue.repository, number: targetIssue.number, body })
+			.then((comment) => {
+				updateIssue(targetIssue.url, (issue) => ({
+					...issue,
+					timeline: issue.timeline.map((existing) => existing.id === optimisticComment.id ? comment : existing),
+				}))
+				flashNotice(`Commented on #${targetIssue.number}`)
+			})
+			.catch((error) => {
+				updateIssue(targetIssue.url, () => previousIssue)
+				flashNotice(errorMessage(error))
+			})
+	}
+
+	const submitActiveComment = () => {
+		if (activeSurface === "issues") submitIssueComment()
+		else submitDiffComment()
+	}
+
 	const openSelectedPullRequestInBrowser = (pullRequest: PullRequestItem) => {
 		void openInBrowser(pullRequest)
 			.then(() => flashNotice(`Opened #${pullRequest.number} in browser`))
+			.catch((error) => flashNotice(errorMessage(error)))
+	}
+
+	const openSelectedIssueInBrowser = () => {
+		if (!selectedIssue) return
+		void openIssueInBrowser(selectedIssue)
+			.then(() => flashNotice(`Opened #${selectedIssue.number} in browser`))
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
@@ -1343,6 +1872,13 @@ export const App = () => {
 		if (!selectedPullRequest) return
 		void copyToClipboard(pullRequestMetadataText(selectedPullRequest))
 			.then(() => flashNotice(`Copied #${selectedPullRequest.number} metadata`))
+			.catch((error) => flashNotice(errorMessage(error)))
+	}
+
+	const copySelectedIssueMetadata = () => {
+		if (!selectedIssue) return
+		void copyToClipboard(issueMetadataText(selectedIssue))
+			.then(() => flashNotice(`Copied #${selectedIssue.number} metadata`))
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
@@ -1365,24 +1901,80 @@ export const App = () => {
 	}
 
 	const openCloseModal = () => {
+		if (activeSurface === "issues") {
+			if (!selectedIssue || selectedIssue.state !== "open") return
+			setCloseModal({
+				repository: selectedIssue.repository,
+				number: selectedIssue.number,
+				title: selectedIssue.title,
+				url: selectedIssue.url,
+				kind: "issue",
+				action: "close",
+				running: false,
+				error: null,
+			})
+			return
+		}
 		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
 		setCloseModal({
 			repository: selectedPullRequest.repository,
 			number: selectedPullRequest.number,
 			title: selectedPullRequest.title,
 			url: selectedPullRequest.url,
+			kind: "pull request",
+			action: "close",
 			running: false,
 			error: null,
 		})
 	}
 
-	const confirmClosePullRequest = () => {
+	const openReopenIssueModal = () => {
+		if (!selectedIssue || selectedIssue.state !== "closed") return
+		setCloseModal({
+			repository: selectedIssue.repository,
+			number: selectedIssue.number,
+			title: selectedIssue.title,
+			url: selectedIssue.url,
+			kind: "issue",
+			action: "reopen",
+			running: false,
+			error: null,
+		})
+	}
+
+	const confirmCloseTarget = () => {
 		if (!closeModal.repository || closeModal.number === null || !closeModal.url || closeModal.running) return
-		const { repository, number, url } = closeModal
-		const targetPullRequest = pullRequests.find((pullRequest) => pullRequest.url === url)
-		const previousPullRequest = targetPullRequest ?? null
+		const { repository, number, url, kind, action } = closeModal
 
 		setCloseModal((current) => ({ ...current, running: true, error: null }))
+		if (kind === "issue") {
+			const targetIssue = issues.find((issue) => issue.url === url)
+			const previousIssue = targetIssue ?? null
+			const run = action === "reopen" ? reopenIssueAction : closeIssue
+			void run({ repository, number })
+				.then(() => {
+					if (previousIssue) {
+						setRecentlyCompletedIssues((current) => ({
+							...current,
+							[previousIssue.url]: {
+								...previousIssue,
+								state: action === "reopen" ? "open" : "closed",
+								closedAt: action === "reopen" ? null : previousIssue.closedAt ?? new Date(),
+							},
+						}))
+					}
+					closeActiveModal()
+					refreshIssues(`${action === "reopen" ? "Reopened" : "Closed"} #${number}`)
+				})
+				.catch((error) => {
+					setCloseModal((current) => ({ ...current, running: false, error: errorMessage(error) }))
+					flashNotice(errorMessage(error))
+				})
+			return
+		}
+
+		const targetPullRequest = pullRequests.find((pullRequest) => pullRequest.url === url)
+		const previousPullRequest = targetPullRequest ?? null
 		void closePullRequest({ repository, number })
 			.then(() => {
 				if (previousPullRequest) {
@@ -1462,8 +2054,8 @@ export const App = () => {
 	}
 
 	const openLabelModal = () => {
-		if (!selectedPullRequest) return
-		const repository = selectedPullRequest.repository
+		const repository = activeSurface === "issues" ? selectedIssue?.repository : selectedPullRequest?.repository
+		if (!repository) return
 		const cachedLabels = registry.get(labelCacheAtom)[repository]
 		if (cachedLabels) {
 			setLabelModal({
@@ -1562,10 +2154,44 @@ export const App = () => {
 	}
 
 	const toggleLabelAtIndex = () => {
-		if (!selectedPullRequest) return
+		if (activeSurface === "issues" && !selectedIssue) return
+		if (activeSurface === "pullRequests" && !selectedPullRequest) return
 		const filtered = filterLabels(labelModal.availableLabels, labelModal.query)
 		const label = filtered[labelModal.selectedIndex]
 		if (!label) return
+
+		if (activeSurface === "issues") {
+			if (!selectedIssue) return
+			const isActive = selectedIssue.labels.some((l) => l.name.toLowerCase() === label.name.toLowerCase())
+			const previousIssue = selectedIssue
+
+			if (isActive) {
+				updateIssue(selectedIssue.url, (issue) => ({
+					...issue,
+					labels: issue.labels.filter((l) => l.name.toLowerCase() !== label.name.toLowerCase()),
+				}))
+				void removeIssueLabel({ repository: selectedIssue.repository, number: selectedIssue.number, label: label.name })
+					.then(() => flashNotice(`Removed ${label.name} from #${selectedIssue.number}`))
+					.catch((error) => {
+						updateIssue(selectedIssue.url, () => previousIssue)
+						flashNotice(errorMessage(error))
+					})
+			} else {
+				updateIssue(selectedIssue.url, (issue) => ({
+					...issue,
+					labels: [...issue.labels, { name: label.name, color: label.color }],
+				}))
+				void addIssueLabel({ repository: selectedIssue.repository, number: selectedIssue.number, label: label.name })
+					.then(() => flashNotice(`Added ${label.name} to #${selectedIssue.number}`))
+					.catch((error) => {
+						updateIssue(selectedIssue.url, () => previousIssue)
+						flashNotice(errorMessage(error))
+					})
+			}
+			return
+		}
+
+		if (!selectedPullRequest) return
 
 		const isActive = selectedPullRequest.labels.some((l) => l.name.toLowerCase() === label.name.toLowerCase())
 		const previousPullRequest = selectedPullRequest
@@ -1599,7 +2225,7 @@ export const App = () => {
 		setCommandPalette(initialCommandPaletteState)
 	}
 	const openRepositoryPicker = () => {
-		setOpenRepositoryModal({ query: selectedRepository ?? "", error: null })
+		setOpenRepositoryModal({ query: activeRepository ?? "", error: null })
 	}
 	const openRepositoryFromInput = () => {
 		const repository = parseRepositoryInput(openRepositoryModal.query)
@@ -1608,7 +2234,8 @@ export const App = () => {
 			return
 		}
 		closeActiveModal()
-		switchViewTo({ _tag: "Repository", repository })
+		if (activeSurface === "issues") switchIssueViewTo({ _tag: "Repository", repository })
+		else switchViewTo({ _tag: "Repository", repository })
 		flashNotice(`Opened ${repository}`)
 	}
 	const insertPastedText = (text: string) => {
@@ -1655,16 +2282,24 @@ export const App = () => {
 	}, [renderer, commandPaletteActive, openRepositoryModalActive, themeModalActive, themeModal.filterMode, commentModalActive, labelModalActive, filterMode])
 
 	const appCommands: readonly AppCommand[] = buildAppCommands({
+		activeSurface,
 		pullRequestStatus,
+		issueStatus,
 		filterQuery,
 		filterMode,
-		selectedRepository,
+		selectedRepository: activeRepository,
 		activeViews,
 		activeView,
+		activeIssueViews: activeIssueViewList,
+		activeIssueView,
 		loadedPullRequestCount,
 		hasMorePullRequests,
 		isLoadingMorePullRequests,
+		loadedIssueCount,
+		hasMoreIssues,
+		isLoadingMoreIssues,
 		selectedPullRequest,
+		selectedIssue,
 		detailFullView,
 		diffFullView,
 		diffReady: selectedDiffState?._tag === "Ready",
@@ -1677,6 +2312,7 @@ export const App = () => {
 		actions: {
 			openCommandPalette,
 			refreshPullRequests,
+			refreshIssues,
 			openFilter: () => {
 				setFilterDraft(filterQuery)
 				setFilterMode(true)
@@ -1689,7 +2325,11 @@ export const App = () => {
 			openThemeModal,
 			openRepositoryPicker,
 			loadMorePullRequests,
+			loadMoreIssues,
 			switchViewTo,
+			switchIssueViewTo,
+			showPullRequests,
+			showIssues,
 			openDetails: () => {
 				setDetailFullView(true)
 				setDetailScrollOffset(0)
@@ -1720,10 +2360,14 @@ export const App = () => {
 			openLabelModal,
 			openMergeModal,
 			openCloseModal,
+			openIssueCommentModal,
+			reopenIssue: openReopenIssueModal,
 			openPullRequestInBrowser: () => {
 				if (selectedPullRequest) openSelectedPullRequestInBrowser(selectedPullRequest)
 			},
+			openIssueInBrowser: openSelectedIssueInBrowser,
 			copyPullRequestMetadata: copySelectedPullRequestMetadata,
+			copyIssueMetadata: copySelectedIssueMetadata,
 			quit: () => renderer.destroy(),
 		},
 	})
@@ -1761,21 +2405,31 @@ export const App = () => {
 		&& !filterMode
 	const runCommandByIdRef = useRef(runCommandById)
 	runCommandByIdRef.current = runCommandById
+	const activeSurfaceRef = useRef(activeSurface)
+	activeSurfaceRef.current = activeSurface
 	useBindings(() => ({
 		enabled: () => globalKeymapActiveRef.current,
 		bindings: [
 			{ key: "/", cmd: () => runCommandByIdRef.current("filter.open") },
-			{ key: "r", cmd: () => runCommandByIdRef.current("pull.refresh") },
+			{ key: "r", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.refresh" : "pull.refresh") },
 			{ key: "t", cmd: () => runCommandByIdRef.current("theme.open") },
+			{ key: "i", cmd: () => runCommandByIdRef.current("surface.issues") },
+			{ key: "p", cmd: () => runCommandByIdRef.current("surface.pull-requests") },
+			{ key: "c", cmd: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
+			} },
 			{ key: "d", cmd: () => runCommandByIdRef.current("diff.open") },
-			{ key: "l", cmd: () => runCommandByIdRef.current("pull.labels") },
+			{ key: "l", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.labels" : "pull.labels") },
 			{ key: "m", cmd: () => runCommandByIdRef.current("pull.merge") },
 			{ key: "shift+m", cmd: () => runCommandByIdRef.current("pull.merge") },
-			{ key: "x", cmd: () => runCommandByIdRef.current("pull.close") },
-			{ key: "o", cmd: () => runCommandByIdRef.current("pull.open-browser") },
+			{ key: "x", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.close" : "pull.close") },
+			{ key: "u", cmd: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
+			} },
+			{ key: "o", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.open-browser" : "pull.open-browser") },
 			{ key: "s", cmd: () => runCommandByIdRef.current("pull.toggle-draft") },
 			{ key: "shift+s", cmd: () => runCommandByIdRef.current("pull.toggle-draft") },
-			{ key: "y", cmd: () => runCommandByIdRef.current("pull.copy-metadata") },
+			{ key: "y", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.copy-metadata" : "pull.copy-metadata") },
 			{ key: "return", cmd: () => runCommandByIdRef.current("detail.open") },
 		],
 	}), [])
@@ -1792,13 +2446,13 @@ export const App = () => {
 	closeModalActiveRef.current = closeModalActive
 	const closeActiveModalRef = useRef(closeActiveModal)
 	closeActiveModalRef.current = closeActiveModal
-	const confirmClosePullRequestRef = useRef(confirmClosePullRequest)
-	confirmClosePullRequestRef.current = confirmClosePullRequest
+	const confirmCloseTargetRef = useRef(confirmCloseTarget)
+	confirmCloseTargetRef.current = confirmCloseTarget
 	useBindings(() => ({
 		enabled: () => closeModalActiveRef.current,
 		bindings: [
 			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => confirmClosePullRequestRef.current() },
+			{ key: "return", cmd: () => confirmCloseTargetRef.current() },
 		],
 	}), [])
 
@@ -1935,14 +2589,14 @@ export const App = () => {
 	// CommentModal: full text editor — escape, submit, all the cursor/edit bindings.
 	const commentModalActiveRef = useRef(false)
 	commentModalActiveRef.current = commentModalActive
-	const commentModalCtxRef = useRef({ submitDiffComment, editComment })
-	commentModalCtxRef.current = { submitDiffComment, editComment }
+	const commentModalCtxRef = useRef({ submitActiveComment, editComment })
+	commentModalCtxRef.current = { submitActiveComment, editComment }
 	const editComm = (transform: Parameters<typeof editComment>[0]) => commentModalCtxRef.current.editComment(transform)
 	useBindings(() => ({
 		enabled: () => commentModalActiveRef.current,
 		bindings: [
 			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "ctrl+s", cmd: () => commentModalCtxRef.current.submitDiffComment() },
+			{ key: "ctrl+s", cmd: () => commentModalCtxRef.current.submitActiveComment() },
 			{ key: "ctrl+a", cmd: () => editComm(moveLineStart) },
 			{ key: "ctrl+e", cmd: () => editComm(moveLineEnd) },
 			{ key: "ctrl+b", cmd: () => editComm(editorMoveLeft) },
@@ -1966,7 +2620,7 @@ export const App = () => {
 			{ key: "home", cmd: () => editComm(moveLineStart) },
 			{ key: "end", cmd: () => editComm(moveLineEnd) },
 			{ key: "shift+return", cmd: () => editComm((state) => insertText(state, "\n")) },
-			{ key: "return", cmd: () => commentModalCtxRef.current.submitDiffComment() },
+			{ key: "return", cmd: () => commentModalCtxRef.current.submitActiveComment() },
 		],
 	}), [])
 
@@ -2215,32 +2869,44 @@ export const App = () => {
 				runCommandById("detail.close")
 				return
 			}
+			if (key.name === "tab") {
+				switchQueueMode(key.shift ? -1 : 1)
+				return
+			}
 			if (isThemeKey(key)) {
 				runCommandById("theme.open")
 				return
 			}
-			if (plainKey && key.name === "d" && selectedPullRequest) {
+			if (plainKey && key.name === "c" && activeSurface === "issues" && selectedIssue?.state === "open") {
+				runCommandById("issue.comment")
+				return
+			}
+			if (plainKey && key.name === "d" && activeSurface === "pullRequests" && selectedPullRequest) {
 				runCommandById("diff.open")
 				return
 			}
-			if (plainKey && key.name === "x" && selectedPullRequest?.state === "open") {
-				runCommandById("pull.close")
+			if (plainKey && key.name === "x") {
+				runCommandById(activeSurface === "issues" ? "issue.close" : "pull.close")
 				return
 			}
-			if (plainKey && key.name === "l" && selectedPullRequest) {
-				runCommandById("pull.labels")
+			if (plainKey && key.name === "u" && activeSurface === "issues") {
+				runCommandById("issue.reopen")
 				return
 			}
-			if (plainKey && (key.name === "m" || key.name === "M") && selectedPullRequest) {
+			if (plainKey && key.name === "l") {
+				runCommandById(activeSurface === "issues" ? "issue.labels" : "pull.labels")
+				return
+			}
+			if (plainKey && (key.name === "m" || key.name === "M") && activeSurface === "pullRequests" && selectedPullRequest) {
 				runCommandById("pull.merge")
 				return
 			}
-			if (plainKey && (key.name === "s" || key.name === "S") && selectedPullRequest) {
+			if (plainKey && (key.name === "s" || key.name === "S") && activeSurface === "pullRequests" && selectedPullRequest) {
 				runCommandById("pull.toggle-draft")
 				return
 			}
 			if (plainKey && key.name === "r") {
-				runCommandById("pull.refresh")
+				runCommandById(activeSurface === "issues" ? "issue.refresh" : "pull.refresh")
 				return
 			}
 			if (key.name === "home") {
@@ -2287,12 +2953,12 @@ export const App = () => {
 				setDetailScrollOffset((current) => current + halfPage)
 				return
 			}
-			if (plainKey && key.name === "o" && selectedPullRequest) {
-				runCommandById("pull.open-browser")
+			if (plainKey && key.name === "o") {
+				runCommandById(activeSurface === "issues" ? "issue.open-browser" : "pull.open-browser")
 				return
 			}
-			if (plainKey && key.name === "y" && selectedPullRequest) {
-				runCommandById("pull.copy-metadata")
+			if (plainKey && key.name === "y") {
+				runCommandById(activeSurface === "issues" ? "issue.copy-metadata" : "pull.copy-metadata")
 				return
 			}
 			return
@@ -2314,7 +2980,7 @@ export const App = () => {
 			runCommandById("filter.clear")
 			return
 		}
-		if (isWideLayout && selectedPullRequest && !detailFullView && !diffFullView) {
+		if (isWideLayout && (activeSurface === "issues" ? selectedIssue : selectedPullRequest) && !detailFullView && !diffFullView) {
 			if (key.name === "home") {
 				scrollDetailPreviewTo(0)
 				return
@@ -2339,10 +3005,10 @@ export const App = () => {
 			key.name === "K"
 		) {
 			setSelectedIndex((current) => {
-				if (visiblePullRequests.length === 0 || groupStarts.length === 0) return 0
-				const currentGroup = getCurrentGroupIndex(current)
-				if (currentGroup <= 0) return groupStarts[groupStarts.length - 1]!
-				return groupStarts[currentGroup - 1]!
+				if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
+				const currentGroup = getCurrentGroupIndex(current, activeGroupStarts)
+				if (currentGroup <= 0) return activeGroupStarts[activeGroupStarts.length - 1]!
+				return activeGroupStarts[currentGroup - 1]!
 			})
 			return
 		}
@@ -2353,48 +3019,49 @@ export const App = () => {
 			key.name === "J"
 		) {
 			setSelectedIndex((current) => {
-				if (visiblePullRequests.length === 0 || groupStarts.length === 0) return 0
-				const currentGroup = getCurrentGroupIndex(current)
-				if (currentGroup >= groupStarts.length - 1) return groupStarts[0]!
-				return groupStarts[currentGroup + 1]!
+				if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
+				const currentGroup = getCurrentGroupIndex(current, activeGroupStarts)
+				if (currentGroup >= activeGroupStarts.length - 1) return activeGroupStarts[0]!
+				return activeGroupStarts[currentGroup + 1]!
 			})
 			return
 		}
 		if (key.ctrl && key.name === "u") {
 			setSelectedIndex((current) => {
-				if (visiblePullRequests.length === 0) return 0
+				if (activeVisibleCount === 0) return 0
 				return Math.max(0, current - halfPage)
 			})
 			return
 		}
 		if (key.ctrl && key.name === "d") {
 			setSelectedIndex((current) => {
-				if (visiblePullRequests.length === 0) return 0
-				return Math.min(visiblePullRequests.length - 1, current + halfPage)
+				if (activeVisibleCount === 0) return 0
+				return Math.min(activeVisibleCount - 1, current + halfPage)
 			})
 			return
 		}
 		if (key.name === "up" || key.name === "k") {
 			setSelectedIndex((current) => {
-				if (visiblePullRequests.length === 0) return 0
-				return current <= 0 ? visiblePullRequests.length - 1 : current - 1
+				if (activeVisibleCount === 0) return 0
+				return current <= 0 ? activeVisibleCount - 1 : current - 1
 			})
 			return
 		}
 		if (key.name === "down" || key.name === "j") {
-			if (visiblePullRequests.length > 0 && selectedIndex >= visiblePullRequests.length - 1 && hasMorePullRequests) {
-				loadMorePullRequests()
+			if (activeVisibleCount > 0 && selectedIndex >= activeVisibleCount - 1 && (activeSurface === "issues" ? hasMoreIssues : hasMorePullRequests)) {
+				if (activeSurface === "issues") loadMoreIssues()
+				else loadMorePullRequests()
 				return
 			}
 			setSelectedIndex((current) => {
-				if (visiblePullRequests.length === 0) return 0
-				return current >= visiblePullRequests.length - 1 ? 0 : current + 1
+				if (activeVisibleCount === 0) return 0
+				return current >= activeVisibleCount - 1 ? 0 : current + 1
 			})
 			return
 		}
 		if (handleVimGoto(key,
 			() => setSelectedIndex(0),
-			() => setSelectedIndex(visiblePullRequests.length === 0 ? 0 : visiblePullRequests.length - 1),
+			() => setSelectedIndex(activeVisibleCount === 0 ? 0 : activeVisibleCount - 1),
 		)) return
 	})
 
@@ -2407,16 +3074,32 @@ export const App = () => {
 		paneWidth: contentWidth,
 		showChecks: true,
 	}) > wideBodyHeight
+	const wideFullscreenIssueDetailScrollable = getIssueDetailsPaneHeight({
+		issue: selectedIssue,
+		contentWidth: fullscreenContentWidth,
+		bodyLines: ISSUE_BODY_SCROLL_LIMIT,
+		paneWidth: contentWidth,
+	}) > wideBodyHeight
 	const narrowFullscreenDetailScrollable = getDetailsPaneHeight({
 		pullRequest: selectedPullRequest,
 		contentWidth: fullscreenContentWidth,
 		bodyLines: DETAIL_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
 	}) > wideBodyHeight
+	const narrowFullscreenIssueDetailScrollable = getIssueDetailsPaneHeight({
+		issue: selectedIssue,
+		contentWidth: fullscreenContentWidth,
+		bodyLines: ISSUE_BODY_SCROLL_LIMIT,
+		paneWidth: contentWidth,
+	}) > wideBodyHeight
 	const wideDetailHeaderHeight = getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true)
 	const wideDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideDetailHeaderHeight)
 	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth)
 	const wideDetailBodyScrollable = wideDetailBodyHeight > wideDetailBodyViewportHeight
+	const wideIssueDetailHeaderHeight = getIssueDetailHeaderHeight(selectedIssue, rightPaneWidth)
+	const wideIssueDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideIssueDetailHeaderHeight)
+	const wideIssueDetailBodyHeight = getScrollableIssueBodyHeight(selectedIssue, rightContentWidth)
+	const wideIssueDetailBodyScrollable = wideIssueDetailBodyHeight > wideIssueDetailBodyViewportHeight
 
 	const prListProps = {
 		groups: visibleGroups,
@@ -2430,6 +3113,19 @@ export const App = () => {
 		hasMore: hasMorePullRequests,
 		isLoadingMore: isLoadingMorePullRequests,
 		onSelectPullRequest: selectPullRequestByUrl,
+	} as const
+	const issueListProps = {
+		groups: visibleIssueGroups,
+		selectedUrl: selectedIssue?.url ?? null,
+		status: issueStatus,
+		error: issueError,
+		filterText: visibleFilterText,
+		showFilterBar: filterMode || filterQuery.length > 0,
+		isFilterEditing: filterMode,
+		loadedCount: loadedIssueCount,
+		hasMore: hasMoreIssues,
+		isLoadingMore: isLoadingMoreIssues,
+		onSelectIssue: selectIssueByUrl,
 	} as const
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
@@ -2460,6 +3156,9 @@ export const App = () => {
 	const commentAnchorLabel = selectedDiffCommentAnchor
 		? `${selectedDiffCommentAnchor.path}:${selectedDiffCommentAnchor.line} ${selectedDiffCommentAnchor.side === "RIGHT" ? "right" : "left"}`
 		: "No diff line selected"
+	const activeCommentAnchorLabel = activeSurface === "issues" && selectedIssue
+		? `${selectedIssue.repository} #${selectedIssue.number}`
+		: commentAnchorLabel
 	const mergeLayout = sizedModal(46, 68, 12, 16)
 	const mergeModalWidth = mergeLayout.width
 	const mergeModalHeight = mergeLayout.height
@@ -2512,10 +3211,31 @@ export const App = () => {
 					onSelectCommentLine={selectDiffCommentLine}
 					themeId={themeId}
 				/>
-			) : detailFullView && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
+			) : detailFullView && activeSurface === "issues" && isSelectedIssueDetailLoading && selectedIssue ? (
+				<box flexGrow={1} flexDirection="column">
+					<IssueDetailHeader issue={selectedIssue} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} />
+					<LoadingPane content={issueDetailLoadingContent} width={contentWidth} height={Math.max(1, wideBodyHeight - getIssueDetailHeaderHeight(selectedIssue, contentWidth))} />
+				</box>
+			) : detailFullView && activeSurface === "pullRequests" && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 				<box flexGrow={1} flexDirection="column">
 					<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} showChecks={isWideLayout} />
 					<LoadingPane content={detailLoadingContent} width={contentWidth} height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))} />
+				</box>
+			) : isWideLayout && detailFullView && activeSurface === "issues" ? (
+				<box flexGrow={1} flexDirection="column">
+					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: wideFullscreenIssueDetailScrollable }}>
+						<IssueDetailsPane
+							issue={selectedIssue}
+							viewerUsername={username}
+							contentWidth={fullscreenContentWidth}
+							bodyLines={fullscreenBodyLines}
+							bodyLineLimit={ISSUE_BODY_SCROLL_LIMIT}
+							paneWidth={contentWidth}
+							placeholderContent={detailPlaceholderContent}
+							loadingIndicator={loadingIndicator}
+							themeId={themeId}
+						/>
+					</scrollbox>
 				</box>
 			) : isWideLayout && detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
@@ -2535,17 +3255,35 @@ export const App = () => {
 					</scrollbox>
 				</box>
 			) : isWideLayout ? (
-			<box key="wide-main" flexGrow={1} flexDirection="row">
+				<box key="wide-main" flexGrow={1} flexDirection="row">
 					<box width={leftPaneWidth} height={wideBodyHeight} flexDirection="column">
 						<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
 							<box paddingLeft={sectionPadding} paddingRight={0}>
-								<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
+								{activeSurface === "issues" ? (
+									<IssueList key={`wide-issues-${leftContentWidth}`} {...issueListProps} contentWidth={leftContentWidth} />
+								) : (
+									<PullRequestList key={`wide-pulls-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
+								)}
 							</box>
 						</scrollbox>
 					</box>
-					<SeparatorColumn height={wideBodyHeight} junctionRows={detailJunctions} />
+					<SeparatorColumn height={wideBodyHeight} junctionRows={activeSurface === "issues" ? issueDetailJunctions : detailJunctions} />
 					<box width={rightPaneWidth} height={wideBodyHeight} flexDirection="column">
-						{isSelectedPullRequestDetailLoading && selectedPullRequest ? (
+						{activeSurface === "issues" && isSelectedIssueDetailLoading && selectedIssue ? (
+							<>
+								<IssueDetailHeader issue={selectedIssue} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
+								<LoadingPane content={issueDetailLoadingContent} width={rightPaneWidth} height={Math.max(1, wideBodyHeight - getIssueDetailHeaderHeight(selectedIssue, rightPaneWidth))} />
+							</>
+						) : activeSurface === "issues" && selectedIssue ? (
+							<>
+								<IssueDetailHeader issue={selectedIssue} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
+								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideIssueDetailBodyScrollable }}>
+									<IssueDetailBody issue={selectedIssue} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={ISSUE_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} />
+								</scrollbox>
+							</>
+						) : activeSurface === "issues" ? (
+							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
+						) : isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 							<>
 								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
 								<LoadingPane content={detailLoadingContent} width={rightPaneWidth} height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))} />
@@ -2561,6 +3299,22 @@ export const App = () => {
 							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
 						)}
 					</box>
+				</box>
+			) : detailFullView && activeSurface === "issues" ? (
+				<box flexGrow={1} flexDirection="column">
+					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: narrowFullscreenIssueDetailScrollable }}>
+						<IssueDetailsPane
+							issue={selectedIssue}
+							viewerUsername={username}
+							contentWidth={fullscreenContentWidth}
+							bodyLines={fullscreenBodyLines}
+							bodyLineLimit={ISSUE_BODY_SCROLL_LIMIT}
+							paneWidth={contentWidth}
+							placeholderContent={detailPlaceholderContent}
+							loadingIndicator={loadingIndicator}
+							themeId={themeId}
+						/>
+					</scrollbox>
 				</box>
 			) : detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
@@ -2580,12 +3334,20 @@ export const App = () => {
 				</box>
 			) : (
 				<box key="narrow-main" height={wideBodyHeight} flexDirection="column">
-					<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
+					{activeSurface === "issues" ? (
+						<IssueDetailsPane issue={selectedIssue} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
+					) : (
+						<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
+					)}
 					<Divider width={contentWidth} />
 					<box flexGrow={1} flexDirection="column">
 						<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
 							<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
-								<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
+								{activeSurface === "issues" ? (
+									<IssueList key={`narrow-issues-${fullscreenContentWidth}`} {...issueListProps} contentWidth={fullscreenContentWidth} />
+								) : (
+									<PullRequestList key={`narrow-pulls-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
+								)}
 							</box>
 						</scrollbox>
 					</box>
@@ -2602,15 +3364,18 @@ export const App = () => {
 					<PlainLine text={footerNotice} fg={colors.count} />
 				) : (
 					<FooterHints
+						surface={activeSurface}
 						filterEditing={filterMode}
 						showFilterClear={filterMode || filterQuery.length > 0}
 						detailFullView={detailFullView}
 						diffFullView={diffFullView}
 						diffCommentMode={diffCommentMode}
-						hasSelection={selectedPullRequest !== null}
-						canCloseSelection={selectedPullRequest?.state === "open"}
-						hasError={pullRequestStatus === "error"}
-						isLoading={pullRequestStatus === "loading" || isRefreshingPullRequests || isHydratingPullRequestDetails || closeModal.running || mergeModal.running}
+						hasSelection={activeSurface === "issues" ? selectedIssue !== null : selectedPullRequest !== null}
+						canCloseSelection={activeSurface === "issues" ? selectedIssue?.state === "open" : selectedPullRequest?.state === "open"}
+						canReopenSelection={activeSurface === "issues" && selectedIssue?.state === "closed"}
+						canCommentSelection={activeSurface === "issues" && selectedIssue?.state === "open"}
+						hasError={activeStatus === "error"}
+						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : isRefreshingPullRequests || isHydratingPullRequestDetails) || closeModal.running || mergeModal.running}
 						loadingIndicator={loadingIndicator}
 						retryProgress={retryProgress}
 					/>
@@ -2619,7 +3384,7 @@ export const App = () => {
 			{labelModalActive ? (
 				<LabelModal
 					state={labelModal}
-					currentLabels={selectedPullRequest?.labels ?? []}
+					currentLabels={activeSurface === "issues" ? selectedIssue?.labels ?? [] : selectedPullRequest?.labels ?? []}
 					modalWidth={labelModalWidth}
 					modalHeight={labelModalHeight}
 					offsetLeft={labelModalLeft}
@@ -2640,7 +3405,7 @@ export const App = () => {
 			{commentModalActive ? (
 				<CommentModal
 					state={commentModal}
-					anchorLabel={commentAnchorLabel}
+					anchorLabel={activeCommentAnchorLabel}
 					modalWidth={commentModalWidth}
 					modalHeight={commentModalHeight}
 					offsetLeft={commentModalLeft}

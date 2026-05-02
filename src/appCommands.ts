@@ -1,18 +1,24 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
-import type { LoadStatus, PullRequestItem } from "./domain.js"
+import type { IssueItem, LoadStatus, PullRequestItem } from "./domain.js"
 import type { DiffView, DiffWrapMode } from "./ui/diff.js"
+import { issueViewEquals, issueViewLabel, issueViewMode, type IssueView } from "./issueViews.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
 
 interface AppCommandActions {
 	readonly openCommandPalette: () => void
 	readonly refreshPullRequests: (message?: string) => void
+	readonly refreshIssues: (message?: string) => void
 	readonly openFilter: () => void
 	readonly clearFilter: () => void
 	readonly openThemeModal: () => void
 	readonly openRepositoryPicker: () => void
 	readonly loadMorePullRequests: () => void
+	readonly loadMoreIssues: () => void
 	readonly switchViewTo: (view: PullRequestView) => void
+	readonly switchIssueViewTo: (view: IssueView) => void
+	readonly showPullRequests: () => void
+	readonly showIssues: () => void
 	readonly openDetails: () => void
 	readonly closeDetails: () => void
 	readonly openDiffView: () => void
@@ -27,22 +33,34 @@ interface AppCommandActions {
 	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
 	readonly openCloseModal: () => void
+	readonly openIssueCommentModal: () => void
+	readonly reopenIssue: () => void
 	readonly openPullRequestInBrowser: () => void
+	readonly openIssueInBrowser: () => void
 	readonly copyPullRequestMetadata: () => void
+	readonly copyIssueMetadata: () => void
 	readonly quit: () => void
 }
 
 interface BuildAppCommandsInput {
+	readonly activeSurface: "pullRequests" | "issues"
 	readonly pullRequestStatus: LoadStatus
+	readonly issueStatus: LoadStatus
 	readonly filterQuery: string
 	readonly filterMode: boolean
 	readonly selectedRepository: string | null
 	readonly activeViews: readonly PullRequestView[]
 	readonly activeView: PullRequestView
+	readonly activeIssueViews: readonly IssueView[]
+	readonly activeIssueView: IssueView
 	readonly loadedPullRequestCount: number
 	readonly hasMorePullRequests: boolean
 	readonly isLoadingMorePullRequests: boolean
+	readonly loadedIssueCount: number
+	readonly hasMoreIssues: boolean
+	readonly isLoadingMoreIssues: boolean
 	readonly selectedPullRequest: PullRequestItem | null
+	readonly selectedIssue: IssueItem | null
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
 	readonly diffReady: boolean
@@ -56,16 +74,24 @@ interface BuildAppCommandsInput {
 }
 
 export const buildAppCommands = ({
+	activeSurface,
 	pullRequestStatus,
+	issueStatus,
 	filterQuery,
 	filterMode,
 	selectedRepository,
 	activeViews,
 	activeView,
+	activeIssueViews,
+	activeIssueView,
 	loadedPullRequestCount,
 	hasMorePullRequests,
 	isLoadingMorePullRequests,
+	loadedIssueCount,
+	hasMoreIssues,
+	isLoadingMoreIssues,
 	selectedPullRequest,
+	selectedIssue,
 	detailFullView,
 	diffFullView,
 	diffReady,
@@ -80,6 +106,10 @@ export const buildAppCommands = ({
 	const selectedPullRequestLabel = selectedPullRequest ? `#${selectedPullRequest.number} ${selectedPullRequest.repository}` : "No pull request selected"
 	const noPullRequestReason = selectedPullRequest ? null : "Select a pull request first."
 	const noOpenPullRequestReason = selectedPullRequest?.state === "open" ? null : selectedPullRequest ? "Pull request is not open." : noPullRequestReason
+	const selectedIssueLabel = selectedIssue ? `#${selectedIssue.number} ${selectedIssue.repository}` : "No issue selected"
+	const noIssueReason = selectedIssue ? null : "Select an issue first."
+	const noOpenIssueReason = selectedIssue?.state === "open" ? null : selectedIssue ? "Issue is not open." : noIssueReason
+	const noClosedIssueReason = selectedIssue?.state === "closed" ? null : selectedIssue ? "Issue is not closed." : noIssueReason
 	const diffReadyReason = selectedPullRequest
 		? diffReady ? null : "Load the diff before running this command."
 		: noPullRequestReason
@@ -87,6 +117,9 @@ export const buildAppCommands = ({
 	const loadMoreDisabledReason = isLoadingMorePullRequests
 		? "Already loading more pull requests."
 		: hasMorePullRequests ? null : "No more pull requests loaded by this view."
+	const loadMoreIssuesDisabledReason = isLoadingMoreIssues
+		? "Already loading more issues."
+		: hasMoreIssues ? null : "No more issues loaded by this view."
 
 	const forSelected = (
 		command: Omit<AppCommand, "subtitle" | "disabledReason"> & { readonly requireOpen?: boolean },
@@ -95,9 +128,22 @@ export const buildAppCommands = ({
 		return defineCommand({
 			...rest,
 			subtitle: selectedPullRequestLabel,
-			disabledReason: requireOpen ? noOpenPullRequestReason : noPullRequestReason,
+			disabledReason: activeSurface === "pullRequests" ? requireOpen ? noOpenPullRequestReason : noPullRequestReason : "Switch to pull requests first.",
 		})
 	}
+
+	const forSelectedIssue = (
+		command: Omit<AppCommand, "subtitle" | "disabledReason"> & { readonly requireOpen?: boolean; readonly requireClosed?: boolean },
+	): AppCommand => {
+		const { requireOpen, requireClosed, ...rest } = command
+		return defineCommand({
+			...rest,
+			subtitle: selectedIssueLabel,
+			disabledReason: activeSurface === "issues" ? requireOpen ? noOpenIssueReason : requireClosed ? noClosedIssueReason : noIssueReason : "Switch to issues first.",
+		})
+	}
+	const activeSelectedLabel = activeSurface === "issues" ? selectedIssueLabel : selectedPullRequestLabel
+	const activeSelectionDisabledReason = activeSurface === "issues" ? noIssueReason : noPullRequestReason
 
 	return [
 		defineCommand({
@@ -119,8 +165,17 @@ export const buildAppCommands = ({
 			run: () => actions.refreshPullRequests("Refreshed"),
 		}),
 		defineCommand({
+			id: "issue.refresh",
+			title: issueStatus === "error" ? "Retry loading issues" : "Refresh issues",
+			scope: "Global",
+			subtitle: "Fetch the latest issue queue from GitHub",
+			shortcut: "r",
+			keywords: ["reload", "sync"],
+			run: () => actions.refreshIssues("Refreshed issues"),
+		}),
+		defineCommand({
 			id: "filter.open",
-			title: "Filter pull requests",
+			title: activeSurface === "issues" ? "Filter issues" : "Filter pull requests",
 			scope: "Global",
 			subtitle: "Search the visible queue",
 			shortcut: "/",
@@ -129,9 +184,9 @@ export const buildAppCommands = ({
 		}),
 		defineCommand({
 			id: "filter.clear",
-			title: "Clear pull request filter",
+			title: activeSurface === "issues" ? "Clear issue filter" : "Clear pull request filter",
 			scope: "Global",
-			subtitle: "Show every pull request in the current queue",
+			subtitle: activeSurface === "issues" ? "Show every issue in the current queue" : "Show every pull request in the current queue",
 			shortcut: "esc",
 			disabledReason: filterQuery.length > 0 || filterMode ? null : "No filter is active.",
 			run: actions.clearFilter,
@@ -144,6 +199,26 @@ export const buildAppCommands = ({
 			shortcut: "t",
 			keywords: ["colors", "appearance"],
 			run: actions.openThemeModal,
+		}),
+		defineCommand({
+			id: "surface.pull-requests",
+			title: "Show pull requests",
+			scope: "View",
+			subtitle: activeSurface === "pullRequests" ? "Already showing pull requests" : "Switch to pull request queues",
+			shortcut: "p",
+			keywords: ["prs", "pulls"],
+			disabledReason: activeSurface === "pullRequests" ? "Already showing pull requests." : null,
+			run: actions.showPullRequests,
+		}),
+		defineCommand({
+			id: "surface.issues",
+			title: "Show issues",
+			scope: "View",
+			subtitle: activeSurface === "issues" ? "Already showing issues" : "Switch to issue queues",
+			shortcut: "i",
+			keywords: ["bugs", "tickets"],
+			disabledReason: activeSurface === "issues" ? "Already showing issues." : null,
+			run: actions.showIssues,
 		}),
 		defineCommand({
 			id: "repository.open",
@@ -159,8 +234,23 @@ export const buildAppCommands = ({
 			scope: "View" as const,
 			subtitle: viewEquals(view, activeView) ? "Already showing this view" : "Switch pull request view",
 			keywords: [viewMode(view), viewLabel(view), "queue", "view"],
-			disabledReason: viewEquals(view, activeView) ? "Already showing this view." : null,
-			run: () => actions.switchViewTo(view),
+			disabledReason: activeSurface === "pullRequests" && viewEquals(view, activeView) ? "Already showing this view." : null,
+			run: () => {
+				actions.showPullRequests()
+				actions.switchViewTo(view)
+			},
+		})),
+		...activeIssueViews.map((view) => defineCommand({
+			id: view._tag === "Repository" ? "issue.view.repository" : `issue.view.${view.mode}`,
+			title: `Show ${issueViewLabel(view)} issues`,
+			scope: "View" as const,
+			subtitle: issueViewEquals(view, activeIssueView) ? "Already showing this issue view" : "Switch issue view",
+			keywords: [issueViewMode(view), issueViewLabel(view), "issues", "queue", "view"],
+			disabledReason: activeSurface === "issues" && issueViewEquals(view, activeIssueView) ? "Already showing this issue view." : null,
+			run: () => {
+				actions.showIssues()
+				actions.switchIssueViewTo(view)
+			},
 		})),
 		defineCommand({
 			id: "pull.load-more",
@@ -171,17 +261,28 @@ export const buildAppCommands = ({
 			keywords: ["next page", "pagination", "more"],
 			run: actions.loadMorePullRequests,
 		}),
-		forSelected({
+		defineCommand({
+			id: "issue.load-more",
+			title: "Load more issues",
+			scope: "Navigation",
+			subtitle: `${loadedIssueCount} loaded`,
+			disabledReason: loadMoreIssuesDisabledReason,
+			keywords: ["next page", "pagination", "more"],
+			run: actions.loadMoreIssues,
+		}),
+		defineCommand({
 			id: "detail.open",
-			title: "Open pull request details",
-			scope: "Pull request",
+			title: activeSurface === "issues" ? "Open issue details" : "Open pull request details",
+			scope: activeSurface === "issues" ? "Issue" : "Pull request",
+			subtitle: activeSelectedLabel,
 			shortcut: "enter",
+			disabledReason: activeSelectionDisabledReason,
 			run: actions.openDetails,
 		}),
 		defineCommand({
 			id: "detail.close",
 			title: "Close details view",
-			scope: "Pull request",
+			scope: "View",
 			subtitle: "Return to the queue",
 			shortcut: "esc",
 			disabledReason: detailFullView ? null : "Details view is not open.",
@@ -316,6 +417,54 @@ export const buildAppCommands = ({
 			shortcut: "y",
 			keywords: ["clipboard", "url", "title"],
 			run: actions.copyPullRequestMetadata,
+		}),
+		forSelectedIssue({
+			id: "issue.comment",
+			title: "Comment on issue",
+			scope: "Issue",
+			shortcut: "c",
+			requireOpen: true,
+			keywords: ["reply", "respond"],
+			run: actions.openIssueCommentModal,
+		}),
+		forSelectedIssue({
+			id: "issue.labels",
+			title: "Manage issue labels",
+			scope: "Issue",
+			shortcut: "l",
+			run: actions.openLabelModal,
+		}),
+		forSelectedIssue({
+			id: "issue.close",
+			title: "Close issue",
+			scope: "Issue",
+			shortcut: "x",
+			requireOpen: true,
+			run: actions.openCloseModal,
+		}),
+		forSelectedIssue({
+			id: "issue.reopen",
+			title: "Reopen issue",
+			scope: "Issue",
+			shortcut: "u",
+			requireClosed: true,
+			run: actions.reopenIssue,
+		}),
+		forSelectedIssue({
+			id: "issue.open-browser",
+			title: "Open issue in browser",
+			scope: "Issue",
+			shortcut: "o",
+			keywords: ["github", "web"],
+			run: actions.openIssueInBrowser,
+		}),
+		forSelectedIssue({
+			id: "issue.copy-metadata",
+			title: "Copy issue metadata",
+			scope: "Issue",
+			shortcut: "y",
+			keywords: ["clipboard", "url", "title"],
+			run: actions.copyIssueMetadata,
 		}),
 		defineCommand({
 			id: "app.quit",

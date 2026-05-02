@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { pullRequestQueueSearchQualifier } from "../src/domain.js"
+import { issueQueueSearchQualifier, pullRequestQueueSearchQualifier } from "../src/domain.js"
 import { viewCacheKey } from "../src/pullRequestViews.js"
 
 describe("pullRequestQueueSearchQualifier", () => {
@@ -25,6 +25,28 @@ describe("pullRequestQueueSearchQualifier", () => {
 
 	test("mentioned mode → mentions:@me", () => {
 		expect(pullRequestQueueSearchQualifier("mentioned", "kit", null)).toBe("mentions:@me")
+	})
+})
+
+describe("issueQueueSearchQualifier", () => {
+	test("repository mode with repository -> repo: qualifier", () => {
+		expect(issueQueueSearchQualifier("repository", "kit", "owner/name")).toBe("repo:owner/name")
+	})
+
+	test("repository mode without repository falls back to author: qualifier", () => {
+		expect(issueQueueSearchQualifier("repository", "kit", null)).toBe("author:kit")
+	})
+
+	test("authored mode -> author:", () => {
+		expect(issueQueueSearchQualifier("authored", "kit", null)).toBe("author:kit")
+	})
+
+	test("assigned mode -> assignee:@me", () => {
+		expect(issueQueueSearchQualifier("assigned", "kit", null)).toBe("assignee:@me")
+	})
+
+	test("mentioned mode -> mentions:@me", () => {
+		expect(issueQueueSearchQualifier("mentioned", "kit", null)).toBe("mentions:@me")
 	})
 })
 

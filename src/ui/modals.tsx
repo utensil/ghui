@@ -30,6 +30,8 @@ export interface CloseModalState {
 	readonly number: number | null
 	readonly title: string
 	readonly url: string | null
+	readonly kind: "pull request" | "issue"
+	readonly action: "close" | "reopen"
 	readonly running: boolean
 	readonly error: string | null
 }
@@ -89,6 +91,8 @@ export const initialCloseModalState: CloseModalState = {
 	number: null,
 	title: "",
 	url: null,
+	kind: "pull request",
+	action: "close",
 	running: false,
 	error: null,
 }
@@ -380,8 +384,9 @@ export const CloseModal = ({
 	loadingIndicator: string
 }) => {
 	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
-	const title = state.number ? `Close  #${state.number}` : "Close pull request"
-	const rightText = state.running ? `${loadingIndicator} closing` : "confirm"
+	const verb = state.action === "reopen" ? "Reopen" : "Close"
+	const title = state.number ? `${verb}  #${state.number}` : `${verb} ${state.kind}`
+	const rightText = state.running ? `${loadingIndicator} ${state.action === "reopen" ? "reopening" : "closing"}` : "confirm"
 	const repo = state.repository ? shortRepoName(state.repository) : ""
 	const titleLines = [fitCell(repo, contentWidth), fitCell(state.title, contentWidth)]
 	const topRows = Math.max(0, Math.floor((bodyHeight - titleLines.length - 2) / 2))
@@ -394,11 +399,11 @@ export const CloseModal = ({
 			width={modalWidth}
 			height={modalHeight}
 			title={title}
-			titleFg={colors.error}
+			titleFg={state.action === "reopen" ? colors.status.passing : colors.error}
 			headerRight={{ text: rightText, pending: state.running }}
-			subtitle={<PlainLine text={fitCell("This will close the pull request without merging it.", contentWidth)} fg={colors.muted} />}
+			subtitle={<PlainLine text={fitCell(`This will ${state.action} the ${state.kind}.`, contentWidth)} fg={colors.muted} />}
 			bodyPadding={1}
-			footer={<HintRow items={[{ key: "enter", label: "close" }, { key: "esc", label: "cancel" }]} />}
+			footer={<HintRow items={[{ key: "enter", label: state.action }, { key: "esc", label: "cancel" }]} />}
 		>
 			{state.error ? (
 				<PlainLine text={fitCell(state.error, contentWidth)} fg={colors.error} />

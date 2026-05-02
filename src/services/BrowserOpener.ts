@@ -1,9 +1,10 @@
 import { Context, Effect, Layer } from "effect"
-import type { PullRequestItem } from "../domain.js"
+import type { IssueItem, PullRequestItem } from "../domain.js"
 import { CommandRunner, type CommandError } from "./CommandRunner.js"
 
 export class BrowserOpener extends Context.Service<BrowserOpener, {
 	readonly openPullRequest: (pullRequest: PullRequestItem) => Effect.Effect<void, CommandError>
+	readonly openIssue: (issue: IssueItem) => Effect.Effect<void, CommandError>
 }>()("ghui/BrowserOpener") {
 	static readonly layerNoDeps = Layer.effect(
 		BrowserOpener,
@@ -14,7 +15,11 @@ export class BrowserOpener extends Context.Service<BrowserOpener, {
 				yield* command.run("gh", ["pr", "view", String(pullRequest.number), "--repo", pullRequest.repository, "--web"])
 			})
 
-			return BrowserOpener.of({ openPullRequest })
+			const openIssue = Effect.fn("BrowserOpener.openIssue")(function*(issue: IssueItem) {
+				yield* command.run("gh", ["issue", "view", String(issue.number), "--repo", issue.repository, "--web"])
+			})
+
+			return BrowserOpener.of({ openPullRequest, openIssue })
 		}),
 	)
 

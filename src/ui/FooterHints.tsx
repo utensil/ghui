@@ -11,6 +11,7 @@ export const RetryProgress = Data.taggedEnum<RetryProgress>()
 export const initialRetryProgress: RetryProgress = RetryProgress.Idle()
 
 interface HintsContext {
+	readonly surface?: "pullRequests" | "issues"
 	readonly filterEditing: boolean
 	readonly showFilterClear: boolean
 	readonly detailFullView: boolean
@@ -18,6 +19,8 @@ interface HintsContext {
 	readonly diffCommentMode: boolean
 	readonly hasSelection: boolean
 	readonly canCloseSelection: boolean
+	readonly canReopenSelection?: boolean
+	readonly canCommentSelection?: boolean
 	readonly hasError: boolean
 	readonly isLoading: boolean
 	readonly loadingIndicator: string
@@ -60,11 +63,15 @@ const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "↑↓", label: "scroll" },
 	{ key: "r", label: ctx.hasError ? "retry" : "refresh" },
 	{ key: "t", label: "theme" },
-	{ key: "s", label: "state", when: ctx.hasSelection },
-	{ key: "d", label: "diff", when: ctx.hasSelection },
+	{ key: "tab", label: "queue" },
+	{ key: "i/p", label: "surface" },
+	{ key: "c", label: "comment", when: ctx.canCommentSelection ?? false },
+	{ key: "s", label: "state", when: ctx.surface !== "issues" && ctx.hasSelection },
+	{ key: "d", label: "diff", when: ctx.surface !== "issues" && ctx.hasSelection },
 	{ key: "l", label: "labels", when: ctx.hasSelection },
-	{ key: "m", label: "merge", when: ctx.hasSelection },
+	{ key: "m", label: "merge", when: ctx.surface !== "issues" && ctx.hasSelection },
 	{ key: "x", label: "close", when: ctx.hasSelection && ctx.canCloseSelection },
+	{ key: "u", label: "reopen", when: ctx.hasSelection && (ctx.canReopenSelection ?? false) },
 	{ key: "o", label: "open" },
 	{ key: "y", label: "copy" },
 	{ key: "q", label: "quit" },
@@ -79,10 +86,14 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		{ key: "retry", label: retrying ? `${(ctx.retryProgress as { attempt: number; max: number }).attempt}/${(ctx.retryProgress as { attempt: number; max: number }).max}` : "", when: retrying, keyFg: colors.status.pending },
 		{ key: ctx.loadingIndicator, label: "loading", when: !retrying && ctx.isLoading, keyFg: colors.status.pending },
 		{ key: "r", label: "retry", when: ctx.hasError },
-		{ key: "d", label: "diff", when: ctx.hasSelection },
+		{ key: "tab", label: "queue" },
+		{ key: "i/p", label: "surface" },
+		{ key: "c", label: "comment", when: ctx.canCommentSelection ?? false },
+		{ key: "d", label: "diff", when: ctx.surface !== "issues" && ctx.hasSelection },
 		{ key: "l", label: "labels", when: ctx.hasSelection },
-		{ key: "m", label: "merge", when: ctx.hasSelection },
+		{ key: "m", label: "merge", when: ctx.surface !== "issues" && ctx.hasSelection },
 		{ key: "x", label: "close", when: ctx.hasSelection && ctx.canCloseSelection },
+		{ key: "u", label: "reopen", when: ctx.hasSelection && (ctx.canReopenSelection ?? false) },
 		{ key: "o", label: "open", when: ctx.hasSelection },
 		{ key: "y", label: "copy", when: ctx.hasSelection },
 		{ key: "ctrl-p", label: "commands" },

@@ -53,7 +53,7 @@ const settle = async (
 	return false
 }
 
-const setupApp = async (cols = 100, rows = 20) => {
+const setupApp = async (cols = 100, rows = 20, surface: "pullRequests" | "issues" = "pullRequests") => {
 	if (!cached) cached = await loadApp()
 	const { createTestRenderer, createRoot, RegistryProvider, createDefaultOpenTuiKeymap, KeymapProvider, App } = cached
 	const setup = await createTestRenderer({ width: cols, height: rows })
@@ -68,8 +68,15 @@ const setupApp = async (cols = 100, rows = 20) => {
 			</RegistryProvider>,
 		)
 	})
-	const ready = await settle(setup.renderOnce, () => setup.captureCharFrame().includes("Mock PR"))
-	if (!ready) throw new Error("App never rendered mock PRs:\n" + setup.captureCharFrame())
+	await stepFrame(setup.renderOnce)
+	if (surface === "pullRequests") {
+		await act(async () => {
+			setup.mockInput.pressKey("p")
+		})
+	}
+	const readyText = surface === "issues" ? "Mock issue" : "Mock PR"
+	const ready = await settle(setup.renderOnce, () => setup.captureCharFrame().includes(readyText))
+	if (!ready) throw new Error(`App never rendered ${readyText}s:\n` + setup.captureCharFrame())
 	return setup
 }
 
@@ -130,6 +137,17 @@ const numberFromIndex = (flatIndex: number) => {
 	const local = flatIndex % PRS_PER_REPO
 	return 1000 + group + local * REPO_COUNT
 }
+
+describe("Issue surface", () => {
+	test("issues render as the first surface", async () => {
+		const { captureCharFrame, renderer } = await setupApp(100, 20, "issues")
+		const frame = captureCharFrame()
+		expect(frame).toContain("issues")
+		expect(frame).toContain("ISSUES")
+		expect(frame).toContain("Mock issue")
+		renderer.destroy()
+	})
+})
 
 describe("PR list scrolling", () => {
 	test("initial selection points at first PR", async () => {
