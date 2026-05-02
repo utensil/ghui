@@ -1,6 +1,7 @@
 import type { DiffRenderable, PasteEvent, ScrollBoxRenderable } from "@opentui/core"
 import { RegistryContext, useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
-import { useBindings } from "@opentui/keymap/react"
+import { useAppCommandRegistry } from "./keyboard/useAppCommandRegistry.js"
+import { scrollBindings, useScopedBindings } from "./keyboard/useScopedBindings.js"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect, Layer, Schedule } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
@@ -9,7 +10,7 @@ import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
 import { useContext, useEffect, useMemo, useRef, useState } from "react"
 import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
-import { clampCommandIndex, commandEnabled, filterCommands } from "./commands.js"
+import { clampCommandIndex, commandEnabled, defineCommand, filterCommands, sortCommandsByScope } from "./commands.js"
 import { config } from "./config.js"
 import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
@@ -145,6 +146,7 @@ const DIFF_STICKY_HEADER_LINES = 2
 const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
 const LOAD_MORE_SELECTION_THRESHOLD = 8
+const LOAD_MORE_SCROLL_THRESHOLD = 3
 const DETAIL_PREFETCH_BEHIND = 1
 const DETAIL_PREFETCH_AHEAD = 3
 const DETAIL_PREFETCH_CONCURRENCY = 3
@@ -351,7 +353,6 @@ const noticeAtom = Atom.make<string | null>(null)
 const filterQueryAtom = Atom.make("")
 const filterDraftAtom = Atom.make("")
 const filterModeAtom = Atom.make(false)
-const pendingGAtom = Atom.make(false)
 const detailFullViewAtom = Atom.make(false)
 const detailScrollOffsetAtom = Atom.make(0)
 const diffFullViewAtom = Atom.make(false)
@@ -854,9 +855,7 @@ const parseIssueDetailAtomKey = (key: string) => {
 	return { repository, number: Number.parseInt(number, 10) }
 }
 
-const isShiftG = (key: { readonly name: string; readonly shift?: boolean }) => key.name === "G" || key.name === "g" && key.shift
 
-const isThemeKey = (key: { readonly name: string; readonly ctrl?: boolean; readonly meta?: boolean }) => !key.ctrl && !key.meta && key.name.toLowerCase() === "t"
 
 const diffCommentThreadKey = (pullRequest: PullRequestItem, comment: Pick<PullRequestReviewComment, "path" | "side" | "line">) =>
 	`${pullRequestDiffKey(pullRequest)}:${diffCommentLocationKey(comment)}`
@@ -980,7 +979,6 @@ export const App = () => {
 	const [filterQuery, setFilterQuery] = useAtom(filterQueryAtom)
 	const [filterDraft, setFilterDraft] = useAtom(filterDraftAtom)
 	const [filterMode, setFilterMode] = useAtom(filterModeAtom)
-	const [pendingG, setPendingG] = useAtom(pendingGAtom)
 	const [detailFullView, setDetailFullView] = useAtom(detailFullViewAtom)
 	const setDetailScrollOffset = useAtomSet(detailScrollOffsetAtom)
 	const [diffFullView, setDiffFullView] = useAtom(diffFullViewAtom)
@@ -1091,7 +1089,6 @@ export const App = () => {
 	const wideDetailLines = Math.max(8, terminalHeight - 8)
 	const wideBodyHeight = Math.max(8, terminalHeight - 4)
 	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-	const pendingGTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
@@ -1145,9 +1142,6 @@ export const App = () => {
 		detailHydrationRef.current.clear()
 		if (noticeTimeoutRef.current !== null) {
 			clearTimeout(noticeTimeoutRef.current)
-		}
-		if (pendingGTimeoutRef.current !== null) {
-			clearTimeout(pendingGTimeoutRef.current)
 		}
 		if (diffPrefetchTimeoutRef.current !== null) {
 			clearTimeout(diffPrefetchTimeoutRef.current)
@@ -1955,6 +1949,20 @@ export const App = () => {
 	}, [activeSurface, selectedIndex, visiblePullRequests.length, visibleIssues.length, filterMode, filterQuery, hasMorePullRequests, hasMoreIssues, isLoadingMorePullRequests, isLoadingMoreIssues, currentQueueCacheKey, currentIssueQueueCacheKey])
 
 	useEffect(() => {
+		if (filterMode || filterQuery.length > 0 || visiblePullRequests.length === 0 || detailFullView || diffFullView) return
+		if (!hasMorePullRequests || isLoadingMorePullRequests) return
+		const checkScroll = () => {
+			const scroll = prListScrollRef.current
+			if (!scroll || scroll.viewport.height <= 0) return
+			const bottom = scroll.scrollTop + scroll.viewport.height
+			if (bottom >= scroll.scrollHeight - LOAD_MORE_SCROLL_THRESHOLD) loadMorePullRequests()
+		}
+		checkScroll()
+		const interval = globalThis.setInterval(checkScroll, 120)
+		return () => globalThis.clearInterval(interval)
+	}, [visiblePullRequests.length, filterMode, filterQuery, detailFullView, diffFullView, hasMorePullRequests, isLoadingMorePullRequests, currentQueueCacheKey])
+
+	useEffect(() => {
 		const scroll = prListScrollRef.current
 		const rowIndex = activeSurface === "issues" ? selectedIssueRowIndex : activeSurface === "pullRequests" ? selectedPullRequestRowIndex : selectedAuxiliaryRowIndex
 		if (!scroll || rowIndex === null) return
@@ -2230,37 +2238,6 @@ export const App = () => {
 	}
 	const scrollDetailPreviewBy = (y: number) => detailPreviewScrollRef.current?.scrollBy({ x: 0, y })
 	const scrollDetailPreviewTo = (y: number) => detailPreviewScrollRef.current?.scrollTo({ x: 0, y })
-
-	const clearPendingGTimeout = () => {
-		if (pendingGTimeoutRef.current !== null) {
-			clearTimeout(pendingGTimeoutRef.current)
-			pendingGTimeoutRef.current = null
-		}
-	}
-
-	const handleVimGoto = (key: { readonly name: string; readonly shift?: boolean }, gotoStart: () => void, gotoEnd: () => void): boolean => {
-		if (isShiftG(key)) {
-			gotoEnd()
-			setPendingG(false)
-			clearPendingGTimeout()
-			return true
-		}
-		if (key.name === "g") {
-			if (pendingG) {
-				gotoStart()
-				setPendingG(false)
-				clearPendingGTimeout()
-			} else {
-				setPendingG(true)
-				pendingGTimeoutRef.current = setTimeout(() => {
-					setPendingG(false)
-					pendingGTimeoutRef.current = null
-				}, 500)
-			}
-			return true
-		}
-		return false
-	}
 
 	const ensureDiffLineVisible = (line: number) => {
 		const scroll = diffScrollRef.current
@@ -3087,15 +3064,33 @@ export const App = () => {
 		const command = appCommands.find((entry) => entry.id === id)
 		return command ? runCommand(command, options) : false
 	}
-	const commandPaletteCommands = commandPaletteActive ? filterCommands(appCommands.filter((command) => command.id !== "command.open" && commandEnabled(command)), commandPalette.query) : []
+	const runCommandByIdRef = useRef(runCommandById)
+	runCommandByIdRef.current = runCommandById
+	useAppCommandRegistry(appCommands, runCommandByIdRef)
+	const dynamicPaletteCommands: readonly AppCommand[] = (() => {
+		if (!commandPaletteActive) return []
+		const repository = parseRepositoryInput(commandPalette.query)
+		if (!repository || repository === selectedRepository) return []
+		return [defineCommand({
+			id: `view.repository.dynamic:${repository}`,
+			title: `Open ${repository}`,
+			scope: "View",
+			subtitle: "Switch to this repository",
+			run: () => switchViewTo({ _tag: "Repository", repository }),
+		})]
+	})()
+	// Dynamic commands always pin to the top of the palette; they came directly from the
+	// user's typed input so they shouldn't be filtered by fuzzy score against themselves.
+	const commandPaletteCommands = commandPaletteActive
+		? [
+			...dynamicPaletteCommands,
+			...sortCommandsByScope(filterCommands(appCommands.filter((command) => command.id !== "command.open" && commandEnabled(command)), commandPalette.query)),
+		]
+		: []
 	const selectedCommandIndex = clampCommandIndex(commandPalette.selectedIndex, commandPaletteCommands)
 	const selectedCommand = commandPaletteCommands[selectedCommandIndex] ?? null
 
-	// Keymap migration phase 2: simple cmd-id bindings move out of useKeyboard.
-	// Gated to "global mode" — no modal active, no full-view, not in filter editing —
-	// so these don't dispatch on top of modal-specific handlers below.
-	const globalKeymapActiveRef = useRef(false)
-	globalKeymapActiveRef.current = !commandPaletteActive
+	const globalLayerActive = !commandPaletteActive
 		&& !openRepositoryModalActive
 		&& !labelModalActive
 		&& !commentModalActive
@@ -3107,305 +3102,386 @@ export const App = () => {
 		&& !diffFullView
 		&& !detailFullView
 		&& !filterMode
-	const runCommandByIdRef = useRef(runCommandById)
-	runCommandByIdRef.current = runCommandById
-	const runSurfaceShortcut = (key: { readonly name: string; readonly shift?: boolean; readonly ctrl?: boolean; readonly meta?: boolean; readonly option?: boolean }) => {
-		if (key.ctrl || key.meta || key.option) return false
-		if (key.name === "i") return runCommandById("surface.issues")
-		if (key.name === "p") return runCommandById("surface.pull-requests")
-		if (key.name === "n") return runCommandById("surface.notifications")
-		if (key.name === "D" || key.name === "d" && key.shift) return runCommandById("surface.discussions")
-		if (key.name === "R" || key.name === "r" && key.shift) return runCommandById("surface.myRepos")
-		if (key.name === "f") return runCommandById("surface.stars")
-		if (key.name === "H" || key.name === "h" && key.shift) return runCommandById("surface.sharedRepos")
-		if (key.name === "w") return runCommandById("surface.watchedRepos")
-		return false
-	}
-	useBindings(() => ({
-		enabled: () => globalKeymapActiveRef.current,
-		bindings: [
-			{ key: "/", cmd: () => runCommandByIdRef.current("filter.open") },
-			{ key: "r", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.refresh" : activeSurfaceRef.current === "pullRequests" ? "pull.refresh" : "aux.refresh") },
-			{ key: "t", cmd: () => runCommandByIdRef.current("theme.open") },
-			{ key: "i", cmd: () => runCommandByIdRef.current("surface.issues") },
-			{ key: "p", cmd: () => runCommandByIdRef.current("surface.pull-requests") },
-			{ key: "n", cmd: () => runCommandByIdRef.current("surface.notifications") },
-			{ key: "shift+d", cmd: () => runCommandByIdRef.current("surface.discussions") },
-			{ key: "shift+r", cmd: () => runCommandByIdRef.current("surface.myRepos") },
-			{ key: "f", cmd: () => runCommandByIdRef.current("surface.stars") },
-			{ key: "shift+h", cmd: () => runCommandByIdRef.current("surface.sharedRepos") },
-			{ key: "w", cmd: () => runCommandByIdRef.current("surface.watchedRepos") },
-			{ key: "c", cmd: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
-			} },
-			{ key: "d", cmd: () => runCommandByIdRef.current("diff.open") },
-			{ key: "l", cmd: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.labels")
-				else if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.labels")
-			} },
-			{ key: "m", cmd: () => runCommandByIdRef.current("pull.merge") },
-			{ key: "shift+m", cmd: () => runCommandByIdRef.current("pull.merge") },
-			{ key: "x", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.close" : activeSurfaceRef.current === "pullRequests" ? "pull.close" : "aux.manage") },
-			{ key: "u", cmd: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
-			} },
-			{ key: "o", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.open-browser" : activeSurfaceRef.current === "pullRequests" ? "pull.open-browser" : "aux.open-browser") },
-			{ key: "s", cmd: () => runCommandByIdRef.current("pull.toggle-draft") },
-			{ key: "shift+s", cmd: () => runCommandByIdRef.current("pull.toggle-draft") },
-			{ key: "y", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.copy-metadata" : activeSurfaceRef.current === "pullRequests" ? "pull.copy-metadata" : "aux.copy-metadata") },
-			{ key: "return", cmd: () => runCommandByIdRef.current("detail.open") },
-		],
-	}), [])
-	// Always-on bindings — work even while modals are open.
-	useBindings(() => ({
-		bindings: [
-			{ key: "ctrl+p", cmd: () => runCommandByIdRef.current("command.open") },
-			{ key: "meta+k", cmd: () => runCommandByIdRef.current("command.open") },
-		],
-	}), [])
+	useScopedBindings({
+		when: true,
+		bindings: {
+			"ctrl+p": "command.open",
+			"meta+k": "command.open",
+		},
+	})
 
-	// CloseModal: escape closes, enter confirms.
-	const closeModalActiveRef = useRef(false)
-	closeModalActiveRef.current = closeModalActive
-	const closeActiveModalRef = useRef(closeActiveModal)
-	closeActiveModalRef.current = closeActiveModal
-	const confirmCloseTargetRef = useRef(confirmCloseTarget)
-	confirmCloseTargetRef.current = confirmCloseTarget
-	useBindings(() => ({
-		enabled: () => closeModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => confirmCloseTargetRef.current() },
-		],
-	}), [])
+	useScopedBindings({
+		when: closeModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			return: confirmCloseTarget,
+		},
+	})
 
-	// ConfirmActionModal: auxiliary management actions require an explicit enter.
-	const confirmActionModalActiveRef = useRef(false)
-	confirmActionModalActiveRef.current = confirmActionModalActive
-	const confirmAuxiliaryActionRef = useRef(confirmAuxiliaryAction)
-	confirmAuxiliaryActionRef.current = confirmAuxiliaryAction
-	useBindings(() => ({
-		enabled: () => confirmActionModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => confirmAuxiliaryActionRef.current() },
-		],
-	}), [])
+	useScopedBindings({
+		when: confirmActionModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			return: confirmAuxiliaryAction,
+		},
+	})
 
-	// MergeModal: escape, enter (when options>0), up/down/j/k navigation.
-	const mergeModalActiveRef = useRef(false)
-	mergeModalActiveRef.current = mergeModalActive
-	const mergeModalContextRef = useRef({ availableCount: 0, confirm: confirmMergeAction, setMergeModal })
-	mergeModalContextRef.current = {
-		availableCount: availableMergeActions(mergeModal.info).length,
-		confirm: confirmMergeAction,
-		setMergeModal,
-	}
-	const moveMergeSelection = (delta: -1 | 1) => mergeModalContextRef.current.setMergeModal((current) => {
-		const max = Math.max(0, mergeModalContextRef.current.availableCount - 1)
+	const moveMergeSelection = (delta: -1 | 1) => setMergeModal((current) => {
+		const max = Math.max(0, availableMergeActions(mergeModal.info).length - 1)
 		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
 	})
-	useBindings(() => ({
-		enabled: () => mergeModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => {
-				if (mergeModalContextRef.current.availableCount > 0) mergeModalContextRef.current.confirm()
-			} },
-			{ key: "up", cmd: () => moveMergeSelection(-1) },
-			{ key: "k", cmd: () => moveMergeSelection(-1) },
-			{ key: "down", cmd: () => moveMergeSelection(1) },
-			{ key: "j", cmd: () => moveMergeSelection(1) },
-		],
-	}), [])
+	useScopedBindings({
+		when: mergeModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			return: () => {
+				if (availableMergeActions(mergeModal.info).length > 0) confirmMergeAction()
+			},
+			up: () => moveMergeSelection(-1),
+			k: () => moveMergeSelection(-1),
+			down: () => moveMergeSelection(1),
+			j: () => moveMergeSelection(1),
+		},
+	})
 
-	// CommentThreadModal: scroll the thread, shortcut to compose a reply.
-	const commentThreadModalActiveRef = useRef(false)
-	commentThreadModalActiveRef.current = commentThreadModalActive
-	const commentThreadCtxRef = useRef({ openDiffCommentModal, setCommentThreadModal, halfPage })
-	commentThreadCtxRef.current = { openDiffCommentModal, setCommentThreadModal, halfPage }
-	const scrollCommentThread = (delta: number) => commentThreadCtxRef.current.setCommentThreadModal((current) => ({
+	const scrollCommentThread = (delta: number) => setCommentThreadModal((current) => ({
 		...current,
 		scrollOffset: Math.max(0, current.scrollOffset + delta),
 	}))
-	useBindings(() => ({
-		enabled: () => commentThreadModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => commentThreadCtxRef.current.openDiffCommentModal() },
-			{ key: "a", cmd: () => commentThreadCtxRef.current.openDiffCommentModal() },
-			{ key: "c", cmd: () => commentThreadCtxRef.current.openDiffCommentModal() },
-			{ key: "up", cmd: () => scrollCommentThread(-1) },
-			{ key: "k", cmd: () => scrollCommentThread(-1) },
-			{ key: "down", cmd: () => scrollCommentThread(1) },
-			{ key: "j", cmd: () => scrollCommentThread(1) },
-			{ key: "pageup", cmd: () => scrollCommentThread(-commentThreadCtxRef.current.halfPage) },
-			{ key: "ctrl+u", cmd: () => scrollCommentThread(-commentThreadCtxRef.current.halfPage) },
-			{ key: "pagedown", cmd: () => scrollCommentThread(commentThreadCtxRef.current.halfPage) },
-			{ key: "ctrl+d", cmd: () => scrollCommentThread(commentThreadCtxRef.current.halfPage) },
-			{ key: "ctrl+v", cmd: () => scrollCommentThread(commentThreadCtxRef.current.halfPage) },
-		],
-	}), [])
+	useScopedBindings({
+		when: commentThreadModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			return: openDiffCommentModal,
+			a: openDiffCommentModal,
+			c: openDiffCommentModal,
+			up: () => scrollCommentThread(-1),
+			k: () => scrollCommentThread(-1),
+			down: () => scrollCommentThread(1),
+			j: () => scrollCommentThread(1),
+			pageup: () => scrollCommentThread(-halfPage),
+			"ctrl+u": () => scrollCommentThread(-halfPage),
+			pagedown: () => scrollCommentThread(halfPage),
+			"ctrl+d": () => scrollCommentThread(halfPage),
+			"ctrl+v": () => scrollCommentThread(halfPage),
+		},
+	})
 
-	// LabelModal: nav keys via keymap; text input stays in useKeyboard fallback.
-	const labelModalActiveRef = useRef(false)
-	labelModalActiveRef.current = labelModalActive
-	const labelModalCtxRef = useRef({ toggleLabelAtIndex, setLabelModal, filteredCount: 0 })
-	labelModalCtxRef.current = {
-		toggleLabelAtIndex,
-		setLabelModal,
-		filteredCount: filterLabels(labelModal.availableLabels, labelModal.query).length,
-	}
-	const moveLabelSelection = (delta: -1 | 1) => labelModalCtxRef.current.setLabelModal((current) => {
-		const max = Math.max(0, labelModalCtxRef.current.filteredCount - 1)
+	const moveLabelSelection = (delta: -1 | 1) => setLabelModal((current) => {
+		const max = Math.max(0, filterLabels(labelModal.availableLabels, labelModal.query).length - 1)
 		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
 	})
-	useBindings(() => ({
-		enabled: () => labelModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => labelModalCtxRef.current.toggleLabelAtIndex() },
-			{ key: "up", cmd: () => moveLabelSelection(-1) },
-			{ key: "k", cmd: () => moveLabelSelection(-1) },
-			{ key: "down", cmd: () => moveLabelSelection(1) },
-			{ key: "j", cmd: () => moveLabelSelection(1) },
-		],
-	}), [])
-
-	// ThemeModal: nav + filter-mode toggle. j/k only navigate when not in filter mode
-	// (so users can type those letters into the query).
-	const themeModalActiveRef = useRef(false)
-	themeModalActiveRef.current = themeModalActive
-	const themeModalCtxRef = useRef({
-		filterMode: false,
-		hasResults: true,
-		closeThemeModal,
-		updateThemeQuery,
-		moveThemeSelection,
+	useScopedBindings({
+		when: labelModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			return: toggleLabelAtIndex,
+			up: () => moveLabelSelection(-1),
+			k: () => moveLabelSelection(-1),
+			down: () => moveLabelSelection(1),
+			j: () => moveLabelSelection(1),
+		},
 	})
-	themeModalCtxRef.current = {
-		filterMode: themeModal.filterMode,
-		hasResults: filterThemeDefinitions(themeModal.query).length > 0,
-		closeThemeModal,
-		updateThemeQuery,
-		moveThemeSelection,
-	}
-	useBindings(() => ({
-		enabled: () => themeModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => {
-				if (themeModalCtxRef.current.filterMode) themeModalCtxRef.current.updateThemeQuery("", { filterMode: false })
-				else themeModalCtxRef.current.closeThemeModal(false)
-			} },
-			{ key: "/", cmd: () => themeModalCtxRef.current.updateThemeQuery("", { filterMode: true }) },
-			{ key: "return", cmd: () => {
-				if (themeModalCtxRef.current.filterMode && !themeModalCtxRef.current.hasResults) return
-				themeModalCtxRef.current.closeThemeModal(true)
-			} },
-			{ key: "up", cmd: () => themeModalCtxRef.current.moveThemeSelection(-1) },
-			{ key: "down", cmd: () => themeModalCtxRef.current.moveThemeSelection(1) },
-			{ key: "k", cmd: () => { if (!themeModalCtxRef.current.filterMode) themeModalCtxRef.current.moveThemeSelection(-1) } },
-			{ key: "j", cmd: () => { if (!themeModalCtxRef.current.filterMode) themeModalCtxRef.current.moveThemeSelection(1) } },
-		],
-	}), [])
 
-	// OpenRepositoryModal: escape closes, return submits.
-	const openRepositoryModalActiveRef = useRef(false)
-	openRepositoryModalActiveRef.current = openRepositoryModalActive
-	const openRepositoryFromInputRef = useRef(openRepositoryFromInput)
-	openRepositoryFromInputRef.current = openRepositoryFromInput
-	useBindings(() => ({
-		enabled: () => openRepositoryModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => openRepositoryFromInputRef.current() },
-		],
-	}), [])
-
-	// CommentModal: full text editor — escape, submit, all the cursor/edit bindings.
-	const commentModalActiveRef = useRef(false)
-	commentModalActiveRef.current = commentModalActive
-	const commentModalCtxRef = useRef({ submitActiveComment, editComment })
-	commentModalCtxRef.current = { submitActiveComment, editComment }
-	const editComm = (transform: Parameters<typeof editComment>[0]) => commentModalCtxRef.current.editComment(transform)
-	useBindings(() => ({
-		enabled: () => commentModalActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "ctrl+s", cmd: () => commentModalCtxRef.current.submitActiveComment() },
-			{ key: "ctrl+a", cmd: () => editComm(moveLineStart) },
-			{ key: "ctrl+e", cmd: () => editComm(moveLineEnd) },
-			{ key: "ctrl+b", cmd: () => editComm(editorMoveLeft) },
-			{ key: "ctrl+f", cmd: () => editComm(editorMoveRight) },
-			{ key: "ctrl+w", cmd: () => editComm(deleteWordBackward) },
-			{ key: "ctrl+u", cmd: () => editComm(deleteToLineStart) },
-			{ key: "ctrl+k", cmd: () => editComm(deleteToLineEnd) },
-			{ key: "ctrl+d", cmd: () => editComm(editorDeleteForward) },
-			{ key: "meta+b", cmd: () => editComm(moveWordBackward) },
-			{ key: "meta+left", cmd: () => editComm(moveWordBackward) },
-			{ key: "meta+f", cmd: () => editComm(moveWordForward) },
-			{ key: "meta+right", cmd: () => editComm(moveWordForward) },
-			{ key: "meta+backspace", cmd: () => editComm(deleteWordBackward) },
-			{ key: "meta+delete", cmd: () => editComm(deleteWordForward) },
-			{ key: "backspace", cmd: () => editComm(editorBackspace) },
-			{ key: "delete", cmd: () => editComm(editorDeleteForward) },
-			{ key: "left", cmd: () => editComm(editorMoveLeft) },
-			{ key: "right", cmd: () => editComm(editorMoveRight) },
-			{ key: "up", cmd: () => editComm((state) => moveVertically(state, -1)) },
-			{ key: "down", cmd: () => editComm((state) => moveVertically(state, 1)) },
-			{ key: "home", cmd: () => editComm(moveLineStart) },
-			{ key: "end", cmd: () => editComm(moveLineEnd) },
-			{ key: "shift+return", cmd: () => editComm((state) => insertText(state, "\n")) },
-			{ key: "return", cmd: () => commentModalCtxRef.current.submitActiveComment() },
-		],
-	}), [])
-
-	// CommandPalette: escape closes, return runs, up/k & down/j navigate.
-	const commandPaletteActiveRef = useRef(false)
-	commandPaletteActiveRef.current = commandPaletteActive
-	const commandPaletteCtxRef = useRef({
-		runSelected: () => {},
-		setCommandPalette,
-		paletteCommands: commandPaletteCommands,
+	useScopedBindings({
+		when: themeModalActive,
+		bindings: {
+			escape: () => {
+				if (themeModal.filterMode) updateThemeQuery("", { filterMode: false })
+				else closeThemeModal(false)
+			},
+			"/": () => updateThemeQuery("", { filterMode: true }),
+			return: () => {
+				if (themeModal.filterMode && filterThemeDefinitions(themeModal.query).length === 0) return
+				closeThemeModal(true)
+			},
+			up: () => moveThemeSelection(-1),
+			down: () => moveThemeSelection(1),
+			k: () => { if (!themeModal.filterMode) moveThemeSelection(-1) },
+			j: () => { if (!themeModal.filterMode) moveThemeSelection(1) },
+		},
 	})
-	commandPaletteCtxRef.current = {
-		runSelected: () => { if (selectedCommand) runCommand(selectedCommand, { notifyDisabled: true, closePalette: true }) },
-		setCommandPalette,
-		paletteCommands: commandPaletteCommands,
-	}
-	const moveCommandPaletteSelection = (delta: -1 | 1) => commandPaletteCtxRef.current.setCommandPalette((current) => {
-		const selectedIndex = clampCommandIndex(current.selectedIndex + delta, commandPaletteCtxRef.current.paletteCommands)
+
+	useScopedBindings({
+		when: openRepositoryModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			return: openRepositoryFromInput,
+		},
+	})
+
+	useScopedBindings({
+		when: commentModalActive,
+		bindings: {
+			escape: closeActiveModal,
+			"ctrl+s": submitActiveComment,
+			"ctrl+a": () => editComment(moveLineStart),
+			"ctrl+e": () => editComment(moveLineEnd),
+			"ctrl+b": () => editComment(editorMoveLeft),
+			"ctrl+f": () => editComment(editorMoveRight),
+			"ctrl+w": () => editComment(deleteWordBackward),
+			"ctrl+u": () => editComment(deleteToLineStart),
+			"ctrl+k": () => editComment(deleteToLineEnd),
+			"ctrl+d": () => editComment(editorDeleteForward),
+			"meta+b": () => editComment(moveWordBackward),
+			"meta+left": () => editComment(moveWordBackward),
+			"meta+f": () => editComment(moveWordForward),
+			"meta+right": () => editComment(moveWordForward),
+			"meta+backspace": () => editComment(deleteWordBackward),
+			"meta+delete": () => editComment(deleteWordForward),
+			backspace: () => editComment(editorBackspace),
+			delete: () => editComment(editorDeleteForward),
+			left: () => editComment(editorMoveLeft),
+			right: () => editComment(editorMoveRight),
+			up: () => editComment((state) => moveVertically(state, -1)),
+			down: () => editComment((state) => moveVertically(state, 1)),
+			home: () => editComment(moveLineStart),
+			end: () => editComment(moveLineEnd),
+			"shift+return": () => editComment((state) => insertText(state, "\n")),
+			return: submitActiveComment,
+		},
+	})
+
+	const moveCommandPaletteSelection = (delta: -1 | 1) => setCommandPalette((current) => {
+		const selectedIndex = clampCommandIndex(current.selectedIndex + delta, commandPaletteCommands)
 		return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
 	})
-	useBindings(() => ({
-		enabled: () => commandPaletteActiveRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => closeActiveModalRef.current() },
-			{ key: "ctrl+c", cmd: () => closeActiveModalRef.current() },
-			{ key: "return", cmd: () => commandPaletteCtxRef.current.runSelected() },
-			{ key: "up", cmd: () => moveCommandPaletteSelection(-1) },
-			{ key: "down", cmd: () => moveCommandPaletteSelection(1) },
-		],
-	}), [])
+	useScopedBindings({
+		when: commandPaletteActive,
+		bindings: {
+			escape: closeActiveModal,
+			"ctrl+c": closeActiveModal,
+			return: () => { if (selectedCommand) runCommand(selectedCommand, { notifyDisabled: true, closePalette: true }) },
+			up: () => moveCommandPaletteSelection(-1),
+			down: () => moveCommandPaletteSelection(1),
+		},
+	})
 
-	// FilterMode: escape cancels, return commits.
-	const filterModeRef = useRef(false)
-	filterModeRef.current = filterMode
-	const filterCtxRef = useRef({ filterQuery, filterDraft, setFilterQuery, setFilterDraft, setFilterMode })
-	filterCtxRef.current = { filterQuery, filterDraft, setFilterQuery, setFilterDraft, setFilterMode }
-	useBindings(() => ({
-		enabled: () => filterModeRef.current,
-		bindings: [
-			{ key: "escape", cmd: () => {
-				filterCtxRef.current.setFilterDraft(filterCtxRef.current.filterQuery)
-				filterCtxRef.current.setFilterMode(false)
-			} },
-			{ key: "return", cmd: () => {
-				filterCtxRef.current.setFilterQuery(filterCtxRef.current.filterDraft)
-				filterCtxRef.current.setFilterMode(false)
-			} },
-		],
-	}), [])
+	useScopedBindings({
+		when: filterMode,
+		bindings: {
+			escape: () => { setFilterDraft(filterQuery); setFilterMode(false) },
+			return: () => { setFilterQuery(filterDraft); setFilterMode(false) },
+		},
+	})
+
+	useScopedBindings({
+		when: diffFullView && !diffCommentMode,
+		bindings: {
+			...scrollBindings(scrollDiffBy, halfPage, scrollDiffTo),
+			escape: "diff.close",
+			return: "diff.close",
+			c: "diff.comment-mode",
+			v: "diff.toggle-view",
+			w: "diff.toggle-wrap",
+			r: "diff.reload",
+			"]": "diff.next-file",
+			right: "diff.next-file",
+			l: "diff.next-file",
+			"[": "diff.previous-file",
+			left: "diff.previous-file",
+			h: "diff.previous-file",
+			o: "pull.open-browser",
+		},
+	})
+
+	useScopedBindings({
+		when: diffFullView && diffCommentMode,
+		bindings: {
+			escape: () => setDiffCommentMode(false),
+			c: "diff.comment-mode",
+			return: () => {
+				if (selectedDiffCommentThread.length > 0) openDiffCommentThreadModal()
+				else openDiffCommentModal()
+			},
+			a: "diff.add-comment",
+			pageup: () => moveDiffCommentAnchor(-halfPage),
+			"ctrl+u": () => moveDiffCommentAnchor(-halfPage),
+			pagedown: () => moveDiffCommentAnchor(halfPage),
+			"ctrl+d": () => moveDiffCommentAnchor(halfPage),
+			"ctrl+v": () => moveDiffCommentAnchor(halfPage),
+			"shift+up": () => moveDiffCommentAnchor(-8),
+			"shift+k": () => moveDiffCommentAnchor(-8),
+			"meta+up": () => moveDiffCommentAnchor(-8),
+			"meta+k": () => moveDiffCommentAnchor(-8),
+			"shift+down": () => moveDiffCommentAnchor(8),
+			"shift+j": () => moveDiffCommentAnchor(8),
+			"meta+down": () => moveDiffCommentAnchor(8),
+			"meta+j": () => moveDiffCommentAnchor(8),
+			up: () => moveDiffCommentAnchor(-1),
+			k: () => moveDiffCommentAnchor(-1),
+			down: () => moveDiffCommentAnchor(1),
+			j: () => moveDiffCommentAnchor(1),
+			left: () => selectDiffCommentSide("LEFT"),
+			h: () => selectDiffCommentSide("LEFT"),
+			right: () => selectDiffCommentSide("RIGHT"),
+			l: () => selectDiffCommentSide("RIGHT"),
+			"]": "diff.next-file",
+			"[": "diff.previous-file",
+		},
+	})
+
+	const scrollDetailFullViewBy = (delta: number) => {
+		detailScrollRef.current?.scrollBy({ x: 0, y: delta })
+		setDetailScrollOffset((current) => Math.max(0, current + delta))
+	}
+	const scrollDetailFullViewTo = (y: number) => {
+		detailScrollRef.current?.scrollTo({ x: 0, y })
+		setDetailScrollOffset(y)
+	}
+	const activeRefreshCommand = () => activeSurfaceRef.current === "issues" ? "issue.refresh" : activeSurfaceRef.current === "pullRequests" ? "pull.refresh" : "aux.refresh"
+	const activeCloseCommand = () => activeSurfaceRef.current === "issues" ? "issue.close" : activeSurfaceRef.current === "pullRequests" ? "pull.close" : "aux.manage"
+	const activeOpenBrowserCommand = () => activeSurfaceRef.current === "issues" ? "issue.open-browser" : activeSurfaceRef.current === "pullRequests" ? "pull.open-browser" : "aux.open-browser"
+	const activeCopyCommand = () => activeSurfaceRef.current === "issues" ? "issue.copy-metadata" : activeSurfaceRef.current === "pullRequests" ? "pull.copy-metadata" : "aux.copy-metadata"
+	const activeSelectedItem = activeSurface === "issues" ? selectedIssue : activeSurface === "pullRequests" ? selectedPullRequest : selectedAuxiliaryItem
+	useScopedBindings({
+		when: detailFullView,
+		bindings: {
+			...scrollBindings(scrollDetailFullViewBy, halfPage, scrollDetailFullViewTo),
+			escape: "detail.close",
+			return: "detail.close",
+			i: "surface.issues",
+			p: "surface.pull-requests",
+			n: "surface.notifications",
+			"shift+d": "surface.discussions",
+			"shift+r": "surface.myRepos",
+			f: "surface.stars",
+			"shift+h": "surface.sharedRepos",
+			w: "surface.watchedRepos",
+			tab: () => switchQueueMode(1),
+			"shift+tab": () => switchQueueMode(-1),
+			t: "theme.open",
+			c: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
+			},
+			d: () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("diff.open")
+			},
+			x: () => runCommandByIdRef.current(activeCloseCommand()),
+			u: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
+			},
+			l: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.labels")
+				else if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.labels")
+			},
+			m: () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
+			},
+			"shift+m": () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
+			},
+			s: () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
+			},
+			"shift+s": () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
+			},
+			r: () => runCommandByIdRef.current(activeRefreshCommand()),
+			o: () => runCommandByIdRef.current(activeOpenBrowserCommand()),
+			y: () => runCommandByIdRef.current(activeCopyCommand()),
+		},
+	})
+
+	const moveSelectedToPreviousGroup = () => setSelectedIndex((current) => {
+		if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
+		const currentGroup = getCurrentGroupIndex(current, activeGroupStarts)
+		if (currentGroup <= 0) return activeGroupStarts[activeGroupStarts.length - 1]!
+		return activeGroupStarts[currentGroup - 1]!
+	})
+	const moveSelectedToNextGroup = () => setSelectedIndex((current) => {
+		if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
+		const currentGroup = getCurrentGroupIndex(current, activeGroupStarts)
+		if (currentGroup >= activeGroupStarts.length - 1) return activeGroupStarts[0]!
+		return activeGroupStarts[currentGroup + 1]!
+	})
+	const stepSelected = (delta: number) => setSelectedIndex((current) => {
+		if (activeVisibleCount === 0) return 0
+		return Math.max(0, Math.min(activeVisibleCount - 1, current + delta))
+	})
+	const stepSelectedDownWithLoadMore = () => {
+		if (activeVisibleCount > 0 && selectedIndex >= activeVisibleCount - 1 && (activeSurface === "issues" ? hasMoreIssues : activeSurface === "pullRequests" ? hasMorePullRequests : false)) {
+			if (activeSurface === "issues") loadMoreIssues()
+			else if (activeSurface === "pullRequests") loadMorePullRequests()
+			return
+		}
+		setSelectedIndex((current) => {
+			if (activeVisibleCount === 0) return 0
+			return current >= activeVisibleCount - 1 ? 0 : current + 1
+		})
+	}
+	const stepSelectedUpWrap = () => setSelectedIndex((current) => {
+		if (activeVisibleCount === 0) return 0
+		return current <= 0 ? activeVisibleCount - 1 : current - 1
+	})
+	useScopedBindings({
+		when: globalLayerActive,
+		bindings: {
+			"/": "filter.open",
+			r: () => runCommandByIdRef.current(activeRefreshCommand()),
+			t: "theme.open",
+			i: "surface.issues",
+			p: "surface.pull-requests",
+			n: "surface.notifications",
+			"shift+d": "surface.discussions",
+			"shift+r": "surface.myRepos",
+			f: "surface.stars",
+			"shift+h": "surface.sharedRepos",
+			w: "surface.watchedRepos",
+			c: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
+			},
+			d: () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("diff.open")
+			},
+			l: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.labels")
+				else if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.labels")
+			},
+			m: () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
+			},
+			"shift+m": () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
+			},
+			x: () => runCommandByIdRef.current(activeCloseCommand()),
+			u: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
+			},
+			o: () => runCommandByIdRef.current(activeOpenBrowserCommand()),
+			s: () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
+			},
+			"shift+s": () => {
+				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
+			},
+			y: () => runCommandByIdRef.current(activeCopyCommand()),
+			return: "detail.open",
+			tab: () => switchQueueMode(1),
+			"shift+tab": () => switchQueueMode(-1),
+			escape: () => { if (filterQuery.length > 0) runCommandByIdRef.current("filter.clear") },
+			home: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewTo(0) },
+			end: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewTo(Number.MAX_SAFE_INTEGER) },
+			pageup: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewBy(-halfPage) },
+			pagedown: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewBy(halfPage) },
+			"[": moveSelectedToPreviousGroup,
+			"meta+up": moveSelectedToPreviousGroup,
+			"meta+k": moveSelectedToPreviousGroup,
+			"shift+k": moveSelectedToPreviousGroup,
+			"]": moveSelectedToNextGroup,
+			"meta+down": moveSelectedToNextGroup,
+			"meta+j": moveSelectedToNextGroup,
+			"shift+j": moveSelectedToNextGroup,
+			"ctrl+u": () => stepSelected(-halfPage),
+			"ctrl+d": () => stepSelected(halfPage),
+			up: stepSelectedUpWrap,
+			k: stepSelectedUpWrap,
+			down: stepSelectedDownWithLoadMore,
+			j: stepSelectedDownWithLoadMore,
+			"g g": () => setSelectedIndex(0),
+			"shift+g": () => setSelectedIndex(activeVisibleCount === 0 ? 0 : activeVisibleCount - 1),
+		},
+	})
 
 	useKeyboard((key) => {
 		lastUserInputAtRef.current = Date.now()
@@ -3470,338 +3546,11 @@ export const App = () => {
 			return
 		}
 
-		if (diffFullView) {
-			if (diffCommentMode) {
-				if (key.name === "escape") {
-					setDiffCommentMode(false)
-					return
-				}
-				if (key.name === "c") {
-					runCommandById("diff.comment-mode")
-					return
-				}
-				if (key.name === "return" || key.name === "enter") {
-					if (selectedDiffCommentThread.length > 0) openDiffCommentThreadModal()
-					else openDiffCommentModal()
-					return
-				}
-				if (key.name === "a") {
-					runCommandById("diff.add-comment")
-					return
-				}
-				if (key.name === "pageup" || key.ctrl && key.name === "u") {
-					moveDiffCommentAnchor(-halfPage)
-					return
-				}
-				if (key.name === "pagedown" || key.ctrl && (key.name === "d" || key.name === "v")) {
-					moveDiffCommentAnchor(halfPage)
-					return
-				}
-				if ((key.shift || key.option || key.meta) && (key.name === "up" || key.name === "k") || key.name === "K") {
-					moveDiffCommentAnchor(-8)
-					return
-				}
-				if ((key.shift || key.option || key.meta) && (key.name === "down" || key.name === "j") || key.name === "J") {
-					moveDiffCommentAnchor(8)
-					return
-				}
-				if (key.name === "up" || key.name === "k") {
-					moveDiffCommentAnchor(-1)
-					return
-				}
-				if (key.name === "down" || key.name === "j") {
-					moveDiffCommentAnchor(1)
-					return
-				}
-				if (key.name === "left" || key.name === "h") {
-					selectDiffCommentSide("LEFT")
-					return
-				}
-				if (key.name === "right" || key.name === "l") {
-					selectDiffCommentSide("RIGHT")
-					return
-				}
-				if (key.name === "]" && selectedDiffState?._tag === "Ready") {
-					runCommandById("diff.next-file")
-					return
-				}
-				if (key.name === "[" && selectedDiffState?._tag === "Ready") {
-					runCommandById("diff.previous-file")
-					return
-				}
-				return
-			}
-
-			if (key.name === "escape" || key.name === "return" || key.name === "enter") {
-				runCommandById("diff.close")
-				return
-			}
-			if (key.name === "c" && selectedDiffState?._tag === "Ready") {
-				runCommandById("diff.comment-mode")
-				return
-			}
-			if (key.name === "home") {
-				scrollDiffTo(0)
-				return
-			}
-			if (key.name === "end") {
-				scrollDiffTo(Number.MAX_SAFE_INTEGER)
-				return
-			}
-			if (key.name === "pageup") {
-				scrollDiffBy(-halfPage)
-				return
-			}
-			if (key.name === "pagedown") {
-				scrollDiffBy(halfPage)
-				return
-			}
-			if (handleVimGoto(key, () => scrollDiffTo(0), () => scrollDiffTo(Number.MAX_SAFE_INTEGER))) return
-			if (key.name === "up" || key.name === "k") {
-				scrollDiffBy(-1)
-				return
-			}
-			if (key.name === "down" || key.name === "j") {
-				scrollDiffBy(1)
-				return
-			}
-			if (key.ctrl && key.name === "u") {
-				scrollDiffBy(-halfPage)
-				return
-			}
-			if (key.ctrl && (key.name === "d" || key.name === "v")) {
-				scrollDiffBy(halfPage)
-				return
-			}
-			if (key.name === "v") {
-				runCommandById("diff.toggle-view")
-				return
-			}
-			if (key.name === "w") {
-				runCommandById("diff.toggle-wrap")
-				return
-			}
-			if (key.name === "r" && selectedPullRequest) {
-				runCommandById("diff.reload")
-				return
-			}
-			if ((key.name === "]" || key.name === "right" || key.name === "l") && selectedDiffState?._tag === "Ready") {
-				runCommandById("diff.next-file")
-				return
-			}
-			if ((key.name === "[" || key.name === "left" || key.name === "h") && selectedDiffState?._tag === "Ready") {
-				runCommandById("diff.previous-file")
-				return
-			}
-			if (key.name === "o" && selectedPullRequest) {
-				runCommandById("pull.open-browser")
-				return
-			}
-			return
-		}
-
-		if (detailFullView) {
-			const plainKey = !key.ctrl && !key.meta && !key.option
-			if (key.name === "escape" || (key.name === "return" || key.name === "enter")) {
-				runCommandById("detail.close")
-				return
-			}
-			if (runSurfaceShortcut(key)) return
-			if (key.name === "tab") {
-				switchQueueMode(key.shift ? -1 : 1)
-				return
-			}
-			if (isThemeKey(key)) {
-				runCommandById("theme.open")
-				return
-			}
-			if (plainKey && key.name === "c" && activeSurface === "issues" && selectedIssue?.state === "open") {
-				runCommandById("issue.comment")
-				return
-			}
-			if (plainKey && key.name === "d" && activeSurface === "pullRequests" && selectedPullRequest) {
-				runCommandById("diff.open")
-				return
-			}
-			if (plainKey && key.name === "x") {
-				runCommandById(activeSurface === "issues" ? "issue.close" : activeSurface === "pullRequests" ? "pull.close" : "aux.manage")
-				return
-			}
-			if (plainKey && key.name === "u" && activeSurface === "issues") {
-				runCommandById("issue.reopen")
-				return
-			}
-			if (plainKey && key.name === "l") {
-				if (activeSurface === "issues") runCommandById("issue.labels")
-				else if (activeSurface === "pullRequests") runCommandById("pull.labels")
-				return
-			}
-			if (plainKey && (key.name === "m" || key.name === "M") && activeSurface === "pullRequests" && selectedPullRequest) {
-				runCommandById("pull.merge")
-				return
-			}
-			if (plainKey && (key.name === "s" || key.name === "S") && activeSurface === "pullRequests" && selectedPullRequest) {
-				runCommandById("pull.toggle-draft")
-				return
-			}
-			if (plainKey && key.name === "r") {
-				runCommandById(activeSurface === "issues" ? "issue.refresh" : activeSurface === "pullRequests" ? "pull.refresh" : "aux.refresh")
-				return
-			}
-			if (key.name === "home") {
-				detailScrollRef.current?.scrollTo({ x: 0, y: 0 })
-				setDetailScrollOffset(0)
-				return
-			}
-			if (key.name === "end") {
-				detailScrollRef.current?.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER })
-				setDetailScrollOffset(Number.MAX_SAFE_INTEGER)
-				return
-			}
-			if (key.name === "pageup") {
-				detailScrollRef.current?.scrollBy({ x: 0, y: -halfPage })
-				setDetailScrollOffset((current) => Math.max(0, current - halfPage))
-				return
-			}
-			if (key.name === "pagedown") {
-				detailScrollRef.current?.scrollBy({ x: 0, y: halfPage })
-				setDetailScrollOffset((current) => current + halfPage)
-				return
-			}
-			if (handleVimGoto(key,
-				() => { detailScrollRef.current?.scrollTo({ x: 0, y: 0 }); setDetailScrollOffset(0) },
-				() => { detailScrollRef.current?.scrollTo({ x: 0, y: Number.MAX_SAFE_INTEGER }); setDetailScrollOffset(Number.MAX_SAFE_INTEGER) },
-			)) return
-			if (key.name === "up" || key.name === "k") {
-				detailScrollRef.current?.scrollBy({ x: 0, y: -1 })
-				setDetailScrollOffset((current) => Math.max(0, current - 1))
-				return
-			}
-			if (key.name === "down" || key.name === "j") {
-				detailScrollRef.current?.scrollBy({ x: 0, y: 1 })
-				setDetailScrollOffset((current) => current + 1)
-				return
-			}
-			if (key.ctrl && key.name === "u") {
-				detailScrollRef.current?.scrollBy({ x: 0, y: -halfPage })
-				setDetailScrollOffset((current) => Math.max(0, current - halfPage))
-				return
-			}
-			if (key.ctrl && (key.name === "d" || key.name === "v")) {
-				detailScrollRef.current?.scrollBy({ x: 0, y: halfPage })
-				setDetailScrollOffset((current) => current + halfPage)
-				return
-			}
-			if (plainKey && key.name === "o") {
-				runCommandById(activeSurface === "issues" ? "issue.open-browser" : activeSurface === "pullRequests" ? "pull.open-browser" : "aux.open-browser")
-				return
-			}
-			if (plainKey && key.name === "y") {
-				runCommandById(activeSurface === "issues" ? "issue.copy-metadata" : activeSurface === "pullRequests" ? "pull.copy-metadata" : "aux.copy-metadata")
-				return
-			}
-			return
-		}
-
 		if (filterMode) {
 			if (isSingleLineInputKey(key)) {
 				setFilterDraft((current) => editSingleLineInput(current, key) ?? current)
 			}
-			return
 		}
-
-		if (key.name === "tab") {
-			switchQueueMode(key.shift ? -1 : 1)
-			return
-		}
-
-		if (key.name === "escape" && filterQuery.length > 0) {
-			runCommandById("filter.clear")
-			return
-		}
-		if (isWideLayout && (activeSurface === "issues" ? selectedIssue : activeSurface === "pullRequests" ? selectedPullRequest : selectedAuxiliaryItem) && !detailFullView && !diffFullView) {
-			if (key.name === "home") {
-				scrollDetailPreviewTo(0)
-				return
-			}
-			if (key.name === "end") {
-				scrollDetailPreviewTo(Number.MAX_SAFE_INTEGER)
-				return
-			}
-			if (key.name === "pageup") {
-				scrollDetailPreviewBy(-halfPage)
-				return
-			}
-			if (key.name === "pagedown") {
-				scrollDetailPreviewBy(halfPage)
-				return
-			}
-		}
-		if (
-			key.name === "[" ||
-			((key.option || key.meta) && (key.name === "up" || key.name === "k")) ||
-			(key.shift && key.name === "k") ||
-			key.name === "K"
-		) {
-			setSelectedIndex((current) => {
-				if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
-				const currentGroup = getCurrentGroupIndex(current, activeGroupStarts)
-				if (currentGroup <= 0) return activeGroupStarts[activeGroupStarts.length - 1]!
-				return activeGroupStarts[currentGroup - 1]!
-			})
-			return
-		}
-		if (
-			key.name === "]" ||
-			((key.option || key.meta) && (key.name === "down" || key.name === "j")) ||
-			(key.shift && key.name === "j") ||
-			key.name === "J"
-		) {
-			setSelectedIndex((current) => {
-				if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
-				const currentGroup = getCurrentGroupIndex(current, activeGroupStarts)
-				if (currentGroup >= activeGroupStarts.length - 1) return activeGroupStarts[0]!
-				return activeGroupStarts[currentGroup + 1]!
-			})
-			return
-		}
-		if (key.ctrl && key.name === "u") {
-			setSelectedIndex((current) => {
-				if (activeVisibleCount === 0) return 0
-				return Math.max(0, current - halfPage)
-			})
-			return
-		}
-		if (key.ctrl && key.name === "d") {
-			setSelectedIndex((current) => {
-				if (activeVisibleCount === 0) return 0
-				return Math.min(activeVisibleCount - 1, current + halfPage)
-			})
-			return
-		}
-		if (key.name === "up" || key.name === "k") {
-			setSelectedIndex((current) => {
-				if (activeVisibleCount === 0) return 0
-				return current <= 0 ? activeVisibleCount - 1 : current - 1
-			})
-			return
-		}
-		if (key.name === "down" || key.name === "j") {
-			if (activeVisibleCount > 0 && selectedIndex >= activeVisibleCount - 1 && (activeSurface === "issues" ? hasMoreIssues : activeSurface === "pullRequests" ? hasMorePullRequests : false)) {
-				if (activeSurface === "issues") loadMoreIssues()
-				else if (activeSurface === "pullRequests") loadMorePullRequests()
-				return
-			}
-			setSelectedIndex((current) => {
-				if (activeVisibleCount === 0) return 0
-				return current >= activeVisibleCount - 1 ? 0 : current + 1
-			})
-			return
-		}
-		if (handleVimGoto(key,
-			() => setSelectedIndex(0),
-			() => setSelectedIndex(activeVisibleCount === 0 ? 0 : activeVisibleCount - 1),
-		)) return
 	})
 
 	const fullscreenContentWidth = Math.max(24, contentWidth - 2)
