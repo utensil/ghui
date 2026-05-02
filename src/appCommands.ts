@@ -1,6 +1,6 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
-import type { IssueItem, LoadStatus, PullRequestItem } from "./domain.js"
+import { surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type IssueItem, type LoadStatus, type PullRequestItem } from "./domain.js"
 import type { DiffView, DiffWrapMode } from "./ui/diff.js"
 import { issueViewEquals, issueViewLabel, issueViewMode, type IssueView } from "./issueViews.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
@@ -9,6 +9,7 @@ interface AppCommandActions {
 	readonly openCommandPalette: () => void
 	readonly refreshPullRequests: (message?: string) => void
 	readonly refreshIssues: (message?: string) => void
+	readonly refreshAuxiliarySurface: (message?: string) => void
 	readonly openFilter: () => void
 	readonly clearFilter: () => void
 	readonly openThemeModal: () => void
@@ -19,6 +20,7 @@ interface AppCommandActions {
 	readonly switchIssueViewTo: (view: IssueView) => void
 	readonly showPullRequests: () => void
 	readonly showIssues: () => void
+	readonly showAuxiliarySurface: (surface: AuxiliarySurface) => void
 	readonly openDetails: () => void
 	readonly closeDetails: () => void
 	readonly openDiffView: () => void
@@ -37,15 +39,19 @@ interface AppCommandActions {
 	readonly reopenIssue: () => void
 	readonly openPullRequestInBrowser: () => void
 	readonly openIssueInBrowser: () => void
+	readonly openAuxiliaryItemInBrowser: () => void
 	readonly copyPullRequestMetadata: () => void
 	readonly copyIssueMetadata: () => void
+	readonly copyAuxiliaryItemMetadata: () => void
+	readonly manageAuxiliaryItem: () => void
 	readonly quit: () => void
 }
 
 interface BuildAppCommandsInput {
-	readonly activeSurface: "pullRequests" | "issues"
+	readonly activeSurface: AppSurface
 	readonly pullRequestStatus: LoadStatus
 	readonly issueStatus: LoadStatus
+	readonly auxiliaryStatus: LoadStatus
 	readonly filterQuery: string
 	readonly filterMode: boolean
 	readonly selectedRepository: string | null
@@ -59,8 +65,10 @@ interface BuildAppCommandsInput {
 	readonly loadedIssueCount: number
 	readonly hasMoreIssues: boolean
 	readonly isLoadingMoreIssues: boolean
+	readonly loadedAuxiliaryCount: number
 	readonly selectedPullRequest: PullRequestItem | null
 	readonly selectedIssue: IssueItem | null
+	readonly selectedAuxiliaryItem: AuxiliaryItem | null
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
 	readonly diffReady: boolean
@@ -77,6 +85,7 @@ export const buildAppCommands = ({
 	activeSurface,
 	pullRequestStatus,
 	issueStatus,
+	auxiliaryStatus,
 	filterQuery,
 	filterMode,
 	selectedRepository,
@@ -90,8 +99,10 @@ export const buildAppCommands = ({
 	loadedIssueCount,
 	hasMoreIssues,
 	isLoadingMoreIssues,
+	loadedAuxiliaryCount,
 	selectedPullRequest,
 	selectedIssue,
+	selectedAuxiliaryItem,
 	detailFullView,
 	diffFullView,
 	diffReady,
@@ -110,6 +121,9 @@ export const buildAppCommands = ({
 	const noIssueReason = selectedIssue ? null : "Select an issue first."
 	const noOpenIssueReason = selectedIssue?.state === "open" ? null : selectedIssue ? "Issue is not open." : noIssueReason
 	const noClosedIssueReason = selectedIssue?.state === "closed" ? null : selectedIssue ? "Issue is not closed." : noIssueReason
+	const selectedAuxiliaryLabel = selectedAuxiliaryItem ? `${selectedAuxiliaryItem.title}${selectedAuxiliaryItem.repository ? ` (${selectedAuxiliaryItem.repository})` : ""}` : "No item selected"
+	const noAuxiliaryReason = selectedAuxiliaryItem ? null : "Select an item first."
+	const noManageAuxiliaryReason = selectedAuxiliaryItem?.action ? null : selectedAuxiliaryItem ? "Selected item has no inline management action." : noAuxiliaryReason
 	const diffReadyReason = selectedPullRequest
 		? diffReady ? null : "Load the diff before running this command."
 		: noPullRequestReason
@@ -120,6 +134,7 @@ export const buildAppCommands = ({
 	const loadMoreIssuesDisabledReason = isLoadingMoreIssues
 		? "Already loading more issues."
 		: hasMoreIssues ? null : "No more issues loaded by this view."
+	const activeSurfaceLabel = surfaceLabels[activeSurface]
 
 	const forSelected = (
 		command: Omit<AppCommand, "subtitle" | "disabledReason"> & { readonly requireOpen?: boolean },
@@ -142,8 +157,27 @@ export const buildAppCommands = ({
 			disabledReason: activeSurface === "issues" ? requireOpen ? noOpenIssueReason : requireClosed ? noClosedIssueReason : noIssueReason : "Switch to issues first.",
 		})
 	}
-	const activeSelectedLabel = activeSurface === "issues" ? selectedIssueLabel : selectedPullRequestLabel
-	const activeSelectionDisabledReason = activeSurface === "issues" ? noIssueReason : noPullRequestReason
+	const activeSelectedLabel = activeSurface === "issues"
+		? selectedIssueLabel
+		: activeSurface === "pullRequests"
+			? selectedPullRequestLabel
+			: selectedAuxiliaryLabel
+	const activeSelectionDisabledReason = activeSurface === "issues"
+		? noIssueReason
+		: activeSurface === "pullRequests"
+			? noPullRequestReason
+			: noAuxiliaryReason
+	const auxiliarySurfaces = ["notifications", "discussions", "stars", "sharedRepos", "watchedRepos"] as const satisfies readonly AuxiliarySurface[]
+	const auxiliaryShortcut = (surface: AuxiliarySurface) => {
+		const shortcuts = {
+			notifications: "n",
+			discussions: "D",
+			stars: undefined,
+			sharedRepos: undefined,
+			watchedRepos: "w",
+		} satisfies Record<AuxiliarySurface, string | undefined>
+		return shortcuts[surface]
+	}
 
 	return [
 		defineCommand({
@@ -174,8 +208,18 @@ export const buildAppCommands = ({
 			run: () => actions.refreshIssues("Refreshed issues"),
 		}),
 		defineCommand({
+			id: "aux.refresh",
+			title: auxiliaryStatus === "error" ? `Retry loading ${activeSurfaceLabel}` : `Refresh ${activeSurfaceLabel}`,
+			scope: "Global",
+			subtitle: `${loadedAuxiliaryCount} loaded`,
+			shortcut: "r",
+			disabledReason: activeSurface === "pullRequests" || activeSurface === "issues" ? "Switch to a GitHub surface first." : null,
+			keywords: ["reload", "sync"],
+			run: () => actions.refreshAuxiliarySurface(`Refreshed ${activeSurfaceLabel}`),
+		}),
+		defineCommand({
 			id: "filter.open",
-			title: activeSurface === "issues" ? "Filter issues" : "Filter pull requests",
+			title: `Filter ${activeSurfaceLabel}`,
 			scope: "Global",
 			subtitle: "Search the visible queue",
 			shortcut: "/",
@@ -184,9 +228,9 @@ export const buildAppCommands = ({
 		}),
 		defineCommand({
 			id: "filter.clear",
-			title: activeSurface === "issues" ? "Clear issue filter" : "Clear pull request filter",
+			title: `Clear ${activeSurfaceLabel} filter`,
 			scope: "Global",
-			subtitle: activeSurface === "issues" ? "Show every issue in the current queue" : "Show every pull request in the current queue",
+			subtitle: `Show every item in ${activeSurfaceLabel}`,
 			shortcut: "esc",
 			disabledReason: filterQuery.length > 0 || filterMode ? null : "No filter is active.",
 			run: actions.clearFilter,
@@ -220,11 +264,27 @@ export const buildAppCommands = ({
 			disabledReason: activeSurface === "issues" ? "Already showing issues." : null,
 			run: actions.showIssues,
 		}),
+		...auxiliarySurfaces.map((surface) => {
+			const shortcut = auxiliaryShortcut(surface)
+			return defineCommand({
+				id: `surface.${surface}`,
+				title: `Show ${surfaceShortLabels[surface]}`,
+				scope: "View" as const,
+				subtitle: activeSurface === surface ? `Already showing ${surfaceLabels[surface]}` : `Switch to ${surfaceLabels[surface]}`,
+				...(shortcut ? { shortcut } : {}),
+				keywords: [surface, surfaceLabels[surface], surfaceShortLabels[surface], "github"],
+				disabledReason: activeSurface === surface ? `Already showing ${surfaceLabels[surface]}.` : null,
+				run: () => actions.showAuxiliarySurface(surface),
+			})
+		}),
 		defineCommand({
 			id: "repository.open",
 			title: "Open repository...",
 			scope: "View",
 			subtitle: selectedRepository ? `Current repository: ${selectedRepository}` : "Enter owner/name or a GitHub URL",
+			disabledReason: activeSurface === "notifications" || activeSurface === "stars" || activeSurface === "sharedRepos" || activeSurface === "watchedRepos"
+				? "Repository picker is available for pull requests, issues, and discussions."
+				: null,
 			keywords: ["repo", "repository", "owner", "github"],
 			run: actions.openRepositoryPicker,
 		}),
@@ -272,8 +332,8 @@ export const buildAppCommands = ({
 		}),
 		defineCommand({
 			id: "detail.open",
-			title: activeSurface === "issues" ? "Open issue details" : "Open pull request details",
-			scope: activeSurface === "issues" ? "Issue" : "Pull request",
+			title: `Open ${activeSurface === "pullRequests" ? "pull request" : activeSurface === "issues" ? "issue" : "item"} details`,
+			scope: activeSurface === "issues" ? "Issue" : activeSurface === "pullRequests" ? "Pull request" : "GitHub",
 			subtitle: activeSelectedLabel,
 			shortcut: "enter",
 			disabledReason: activeSelectionDisabledReason,
@@ -465,6 +525,42 @@ export const buildAppCommands = ({
 			shortcut: "y",
 			keywords: ["clipboard", "url", "title"],
 			run: actions.copyIssueMetadata,
+		}),
+		defineCommand({
+			id: "aux.open-browser",
+			title: "Open selected item in browser",
+			scope: "GitHub",
+			subtitle: selectedAuxiliaryLabel,
+			shortcut: "o",
+			disabledReason: activeSurface === "pullRequests" || activeSurface === "issues" ? "Switch to a GitHub surface first." : noAuxiliaryReason,
+			keywords: ["github", "web", "repository"],
+			run: actions.openAuxiliaryItemInBrowser,
+		}),
+		defineCommand({
+			id: "aux.copy-metadata",
+			title: "Copy selected item metadata",
+			scope: "GitHub",
+			subtitle: selectedAuxiliaryLabel,
+			shortcut: "y",
+			disabledReason: activeSurface === "pullRequests" || activeSurface === "issues" ? "Switch to a GitHub surface first." : noAuxiliaryReason,
+			keywords: ["clipboard", "url", "title"],
+			run: actions.copyAuxiliaryItemMetadata,
+		}),
+		defineCommand({
+			id: "aux.manage",
+			title: selectedAuxiliaryItem?.action === "mark-notification-read"
+				? "Mark notification read"
+				: selectedAuxiliaryItem?.action === "unstar-repository"
+					? "Unstar repository"
+					: selectedAuxiliaryItem?.action === "unwatch-repository"
+						? "Unwatch repository"
+						: "Manage selected item",
+			scope: "GitHub",
+			subtitle: selectedAuxiliaryLabel,
+			shortcut: "x",
+			disabledReason: activeSurface === "pullRequests" || activeSurface === "issues" ? "Switch to a GitHub surface first." : noManageAuxiliaryReason,
+			keywords: ["remove", "read", "unstar", "unwatch"],
+			run: actions.manageAuxiliaryItem,
 		}),
 		defineCommand({
 			id: "app.quit",

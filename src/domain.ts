@@ -4,6 +4,37 @@ export type LoadStatus = "loading" | "ready" | "error"
 
 export type PullRequestState = "open" | "closed" | "merged"
 
+export const appSurfaces = ["pullRequests", "issues", "notifications", "discussions", "stars", "sharedRepos", "watchedRepos"] as const
+export type AppSurface = (typeof appSurfaces)[number]
+export type AuxiliarySurface = Exclude<AppSurface, "pullRequests" | "issues">
+
+export const auxiliarySurfaces = ["notifications", "discussions", "stars", "sharedRepos", "watchedRepos"] as const satisfies readonly AuxiliarySurface[]
+
+export const surfaceLabels = {
+	pullRequests: "pull requests",
+	issues: "issues",
+	notifications: "notifications",
+	discussions: "discussions",
+	stars: "starred repositories",
+	sharedRepos: "shared repositories",
+	watchedRepos: "watched repositories",
+} as const satisfies Record<AppSurface, string>
+
+export const surfaceShortLabels = {
+	pullRequests: "pull requests",
+	issues: "issues",
+	notifications: "notifications",
+	discussions: "discussions",
+	stars: "stars",
+	sharedRepos: "shared with me",
+	watchedRepos: "watched",
+} as const satisfies Record<AppSurface, string>
+
+const auxiliarySurfaceSet = new Set<AppSurface>(auxiliarySurfaces)
+
+export const isAuxiliarySurface = (surface: AppSurface): surface is AuxiliarySurface =>
+	auxiliarySurfaceSet.has(surface)
+
 export const pullRequestQueueModes = ["authored", "review", "assigned", "mentioned"] as const
 export type PullRequestUserQueueMode = (typeof pullRequestQueueModes)[number]
 export type PullRequestQueueMode = "repository" | PullRequestUserQueueMode
@@ -59,6 +90,25 @@ export type ReviewStatus = "draft" | "approved" | "changes" | "review" | "none"
 export type Mergeable = "mergeable" | "conflicting" | "unknown"
 
 export type IssueState = "open" | "closed"
+
+export type AuxiliaryItemAction = "mark-notification-read" | "unstar-repository" | "unwatch-repository"
+
+export interface AuxiliaryItem {
+	readonly id: string
+	readonly surface: AuxiliarySurface
+	readonly repository: string | null
+	readonly number: number | null
+	readonly title: string
+	readonly subtitle: string | null
+	readonly body: string
+	readonly itemType: string
+	readonly state: string | null
+	readonly author: string | null
+	readonly url: string | null
+	readonly updatedAt: Date | null
+	readonly meta: readonly string[]
+	readonly action: AuxiliaryItemAction | null
+}
 
 // DiffCommentSide is the only literal type still consumed at runtime — GitHubService
 // uses it as a Schema inside PullRequestCommentSchema.

@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
+import type { AuxiliaryItem, AuxiliarySurface, CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
 import { GitHubService } from "./GitHubService.js"
 
 export interface MockOptions {
@@ -104,6 +104,52 @@ export const buildMockIssues = (options: MockOptions): readonly IssueItem[] => {
 	return Array.from({ length: Math.max(12, Math.floor(resolved.prCount / 2)) }, (_, index) => buildIssue(index, resolved))
 }
 
+const buildAuxiliaryItem = (surface: AuxiliarySurface, index: number, options: Required<MockOptions>): AuxiliaryItem => {
+	const repository = `mock-org/repo-${index % options.repoCount}`
+	const updatedAt = new Date(Date.now() - index * 3_600_000)
+	const repoUrl = `https://github.com/${repository}`
+	const titleBySurface = {
+		notifications: `Mock notification ${index + 1}`,
+		discussions: `Mock discussion ${index + 1}`,
+		stars: repository,
+		sharedRepos: repository,
+		watchedRepos: repository,
+	} satisfies Record<AuxiliarySurface, string>
+	const actionBySurface = {
+		notifications: "mark-notification-read",
+		discussions: null,
+		stars: "unstar-repository",
+		sharedRepos: null,
+		watchedRepos: "unwatch-repository",
+	} satisfies Record<AuxiliarySurface, AuxiliaryItem["action"]>
+	return {
+		id: `${surface}:${index}`,
+		surface,
+		repository,
+		number: surface === "discussions" ? 3000 + index : null,
+		title: titleBySurface[surface],
+		subtitle: surface === "discussions" ? `General in ${repository}` : repository,
+		body: `Mock ${surface} item for ${repository}.`,
+		itemType: surface === "discussions" ? "discussion" : surface === "notifications" ? "Issue" : "repository",
+		state: surface === "notifications" ? "unread" : surface === "discussions" ? "open" : "public",
+		author: surface === "discussions" ? options.username : null,
+		url: surface === "discussions" ? `${repoUrl}/discussions/${3000 + index}` : repoUrl,
+		updatedAt,
+		meta: surface === "notifications" ? ["mention", "unread"] : surface === "discussions" ? ["General", "2 comments"] : ["public", `${10 + index} stars`],
+		action: actionBySurface[surface],
+	}
+}
+
+const buildMockAuxiliaryItems = (surface: AuxiliarySurface, options: MockOptions): readonly AuxiliaryItem[] => {
+	const resolved: Required<MockOptions> = {
+		prCount: options.prCount,
+		repoCount: options.repoCount ?? 4,
+		username: options.username ?? "mock-user",
+		seed: options.seed ?? 0,
+	}
+	return Array.from({ length: Math.max(5, Math.floor(resolved.prCount / 3)) }, (_, index) => buildAuxiliaryItem(surface, index, resolved))
+}
+
 const filterByView = (mode: PullRequestQueueMode, repository: string | null, source: readonly PullRequestItem[]) => {
 	if (mode === "repository") return repository ? source.filter((item) => item.repository === repository) : []
 	return source
@@ -144,6 +190,13 @@ export const MockGitHubService = {
 	layer: (options: MockOptions) => {
 		const items = buildMockPullRequests(options)
 		const issues = buildMockIssues(options)
+		const auxiliaryItems = {
+			notifications: buildMockAuxiliaryItems("notifications", options),
+			discussions: buildMockAuxiliaryItems("discussions", options),
+			stars: buildMockAuxiliaryItems("stars", options),
+			sharedRepos: buildMockAuxiliaryItems("sharedRepos", options),
+			watchedRepos: buildMockAuxiliaryItems("watchedRepos", options),
+		} satisfies Record<AuxiliarySurface, readonly AuxiliaryItem[]>
 		const username = options.username ?? "mock-user"
 		const summaryItems = items.map((item) => ({
 			...item,
@@ -185,6 +238,14 @@ export const MockGitHubService = {
 				reopenIssue: () => Effect.void,
 				getPullRequestDetails: (repository, number) => Effect.succeed(findPullRequest(repository, number)),
 				getAuthenticatedUser: () => Effect.succeed(username),
+				listNotifications: () => Effect.succeed(auxiliaryItems.notifications),
+				markNotificationRead: () => Effect.void,
+				listRepositoryDiscussions: (repository) => Effect.succeed(repository ? auxiliaryItems.discussions.filter((item) => item.repository === repository) : auxiliaryItems.discussions),
+				listStarredRepositories: () => Effect.succeed(auxiliaryItems.stars),
+				unstarRepository: () => Effect.void,
+				listSharedRepositories: () => Effect.succeed(auxiliaryItems.sharedRepos),
+				listWatchedRepositories: () => Effect.succeed(auxiliaryItems.watchedRepos),
+				unwatchRepository: () => Effect.void,
 				getPullRequestDiff: (_repo, _number) => Effect.succeed(""),
 				listPullRequestComments: (_repo, _number) => Effect.succeed([] as readonly PullRequestReviewComment[]),
 				getPullRequestMergeInfo: (repository, number) => Effect.succeed({

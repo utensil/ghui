@@ -11,6 +11,7 @@ const scopeLabels = {
 	View: "View",
 	"Pull request": "Pull Request",
 	Issue: "Issue",
+	GitHub: "GitHub",
 	Diff: "Diff",
 	Navigation: "Navigation",
 	System: "System",

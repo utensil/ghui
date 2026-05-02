@@ -11,7 +11,7 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, commandEnabled, filterCommands } from "./commands.js"
 import { config } from "./config.js"
-import { type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
+import { isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import { activeIssueViews, initialIssueView, issueViewCacheKey, issueViewEquals, issueViewLabel, issueViewMode, issueViewRepository, nextIssueView, type IssueView } from "./issueViews.js"
@@ -25,6 +25,8 @@ import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { loadStoredThemeId, saveStoredThemeId } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, setActiveTheme, themeDefinitions, type ThemeId } from "./ui/colors.js"
+import { AUXILIARY_BODY_SCROLL_LIMIT, AuxiliaryDetailBody, AuxiliaryDetailHeader, AuxiliaryDetailsPane, getAuxiliaryDetailHeaderHeight, getAuxiliaryDetailJunctionRows, getAuxiliaryDetailsPaneHeight, getScrollableAuxiliaryBodyHeight } from "./ui/AuxiliaryDetailsPane.js"
+import { auxiliaryListRowIndex, AuxiliaryList, buildAuxiliaryListRows } from "./ui/AuxiliaryList.js"
 import { backspace as editorBackspace, deleteForward as editorDeleteForward, deleteToLineEnd, deleteToLineStart, deleteWordBackward, deleteWordForward, insertText, moveLeft as editorMoveLeft, moveLineEnd, moveLineStart, moveRight as editorMoveRight, moveVertically, moveWordBackward, moveWordForward, type CommentEditorValue } from "./ui/commentEditor.js"
 import { buildStackedDiffFiles, diffCommentLocationKey, getStackedDiffCommentAnchors, nearestDiffCommentAnchorIndex, PullRequestDiffState, pullRequestDiffKey, safeDiffFileIndex, scrollTopForVisibleLine, splitPatchFiles, stackedDiffFileAtLine, type DiffCommentAnchor, type DiffView, type DiffWrapMode, type StackedDiffCommentAnchor } from "./ui/diff.js"
 import { DETAIL_BODY_SCROLL_LIMIT, DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailHeaderHeight, getDetailJunctionRows, getDetailsPaneHeight, getScrollableDetailBodyHeight, LoadingPane, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
@@ -75,8 +77,16 @@ interface IssueLoad {
 	readonly hasNextPage: boolean
 }
 
+interface AuxiliaryLoad {
+	readonly cacheKey: string
+	readonly surface: AuxiliarySurface
+	readonly repository: string | null
+	readonly data: readonly AuxiliaryItem[]
+	readonly fetchedAt: Date | null
+}
+
 interface DetailPlaceholderInput {
-	readonly surface: "pullRequests" | "issues"
+	readonly surface: AppSurface
 	readonly status: LoadStatus
 	readonly retryProgress: RetryProgress
 	readonly loadingIndicator: string
@@ -137,14 +147,20 @@ const appendIssuePage = (existing: readonly IssueItem[], incoming: readonly Issu
 	return [...existing, ...incoming.filter((issue) => !seen.has(issue.url))]
 }
 
+const auxiliaryCacheKey = (surface: AuxiliarySurface, repository: string | null) =>
+	surface === "discussions" ? `${surface}:${repository ?? ""}` : surface
+
 const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
-const activeSurfaceAtom = Atom.make<"pullRequests" | "issues">("issues").pipe(Atom.keepAlive)
+const activeSurfaceAtom = Atom.make<AppSurface>("issues").pipe(Atom.keepAlive)
 const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(config.repository)).pipe(Atom.keepAlive)
 const activeIssueViewAtom = Atom.make<IssueView>(initialIssueView(config.repository)).pipe(Atom.keepAlive)
+const discussionRepositoryAtom = Atom.make<string | null>(config.repository).pipe(Atom.keepAlive)
 const queueLoadCacheAtom = Atom.make<Partial<Record<string, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
 const issueLoadCacheAtom = Atom.make<Partial<Record<string, IssueLoad>>>({}).pipe(Atom.keepAlive)
+const auxiliaryLoadCacheAtom = Atom.make<Partial<Record<string, AuxiliaryLoad>>>({}).pipe(Atom.keepAlive)
 const queueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
 const issueSelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
+const auxiliarySelectionAtom = Atom.make<Partial<Record<string, number>>>({}).pipe(Atom.keepAlive)
 const trimQueueLoadCache = (cache: Partial<Record<string, PullRequestLoad>>) => {
 	const repositoryKeys = Object.keys(cache).filter((key) => key.startsWith("repository:"))
 	if (repositoryKeys.length <= MAX_REPOSITORY_CACHE_ENTRIES) return cache
@@ -241,6 +257,50 @@ const issuesAtom = githubRuntime.atom(
 		})
 	),
 ).pipe(Atom.keepAlive)
+const auxiliaryAtom = githubRuntime.atom(
+	GitHubService.use((github) =>
+		Effect.gen(function*() {
+			const activeSurface = yield* Atom.get(activeSurfaceAtom)
+			if (!isAuxiliarySurface(activeSurface)) return null
+			const repository = activeSurface === "discussions" ? yield* Atom.get(discussionRepositoryAtom) : null
+			const cacheKey = auxiliaryCacheKey(activeSurface, repository)
+			const data = yield* (() => {
+				switch (activeSurface) {
+					case "notifications":
+						return github.listNotifications()
+					case "discussions":
+						return github.listRepositoryDiscussions(repository)
+					case "stars":
+						return github.listStarredRepositories()
+					case "sharedRepos":
+						return github.listSharedRepositories()
+					case "watchedRepos":
+						return github.listWatchedRepositories()
+				}
+			})().pipe(
+				Effect.tapError(() =>
+					Atom.update(retryProgressAtom, (current) => RetryProgress.Retrying({
+						attempt: Math.min(RetryProgress.$match(current, { Idle: () => 0, Retrying: ({ attempt }) => attempt }) + 1, PR_FETCH_RETRIES),
+						max: PR_FETCH_RETRIES,
+					}))
+				),
+				Effect.retry({ times: PR_FETCH_RETRIES, schedule: Schedule.exponential("300 millis", 2) }),
+				Effect.tapError(() => Atom.set(retryProgressAtom, initialRetryProgress)),
+			)
+
+			yield* Atom.set(retryProgressAtom, initialRetryProgress)
+			const load = {
+				cacheKey,
+				surface: activeSurface,
+				repository,
+				data,
+				fetchedAt: new Date(),
+			} satisfies AuxiliaryLoad
+			yield* Atom.update(auxiliaryLoadCacheAtom, (cache) => ({ ...cache, [cacheKey]: load }))
+			return load
+		})
+	),
+).pipe(Atom.keepAlive)
 const selectedIndexAtom = Atom.make(0)
 const noticeAtom = Atom.make<string | null>(null)
 const filterQueryAtom = Atom.make("")
@@ -291,6 +351,17 @@ const issueLoadAtom = Atom.make((get) => {
 	return cache[cacheKey] ?? (resolved && issueViewCacheKey(resolved.view) === cacheKey ? resolved : null)
 })
 
+const auxiliaryLoadAtom = Atom.make((get) => {
+	const activeSurface = get(activeSurfaceAtom)
+	if (!isAuxiliarySurface(activeSurface)) return null
+	const repository = activeSurface === "discussions" ? get(discussionRepositoryAtom) : null
+	const cacheKey = auxiliaryCacheKey(activeSurface, repository)
+	const cache = get(auxiliaryLoadCacheAtom)
+	const result = get(auxiliaryAtom)
+	const resolved = AsyncResult.getOrElse(result, () => null)
+	return cache[cacheKey] ?? (resolved && resolved.cacheKey === cacheKey ? resolved : null)
+})
+
 const isLoadingQueueModeAtom = Atom.make((get) => {
 	const cacheKey = viewCacheKey(get(activeViewAtom))
 	const resolved = AsyncResult.getOrElse(get(pullRequestsAtom), () => null)
@@ -316,6 +387,15 @@ const issueStatusAtom = Atom.make((get): LoadStatus => {
 	const load = get(issueLoadAtom)
 	const isLoadingQueue = get(isLoadingIssueQueueModeAtom)
 	if ((result.waiting || isLoadingQueue) && load === null) return "loading"
+	return AsyncResult.isFailure(result) ? "error" : "ready"
+})
+
+const auxiliaryStatusAtom = Atom.make((get): LoadStatus => {
+	const activeSurface = get(activeSurfaceAtom)
+	if (!isAuxiliarySurface(activeSurface)) return "ready"
+	const result = get(auxiliaryAtom)
+	const load = get(auxiliaryLoadAtom)
+	if (result.waiting && load === null) return "loading"
 	return AsyncResult.isFailure(result) ? "error" : "ready"
 })
 
@@ -350,6 +430,8 @@ const displayedIssuesAtom = Atom.make((get) => {
 		...Object.values(recentlyCompleted).filter((issue) => !seenUrls.has(issue.url)),
 	]
 })
+
+const displayedAuxiliaryItemsAtom = Atom.make((get) => get(auxiliaryLoadAtom)?.data ?? [])
 
 const effectiveFilterQueryAtom = Atom.make((get) =>
 	(get(filterModeAtom) ? get(filterDraftAtom) : get(filterQueryAtom)).trim().toLowerCase(),
@@ -389,6 +471,35 @@ const filteredIssuesAtom = Atom.make((get) => {
 	).map(({ issue }) => issue)
 })
 
+const auxiliaryFilterScore = (item: AuxiliaryItem, query: string) => {
+	const fields = [
+		item.title.toLowerCase(),
+		item.repository?.toLowerCase() ?? "",
+		item.subtitle?.toLowerCase() ?? "",
+		item.itemType.toLowerCase(),
+		item.state?.toLowerCase() ?? "",
+		item.author?.toLowerCase() ?? "",
+		...item.meta.map((entry) => entry.toLowerCase()),
+	]
+	const scores = fields.flatMap((field, index) => {
+		const matchIndex = field.indexOf(query)
+		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
+	})
+	return scores.length > 0 ? Math.min(...scores) : null
+}
+
+const filteredAuxiliaryItemsAtom = Atom.make((get) => {
+	const items = get(displayedAuxiliaryItemsAtom)
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return items
+	return items.flatMap((item) => {
+		const score = auxiliaryFilterScore(item, query)
+		return score === null ? [] : [{ item, score }]
+	}).sort((left, right) =>
+		left.score - right.score || (right.item.updatedAt?.getTime() ?? 0) - (left.item.updatedAt?.getTime() ?? 0)
+	).map(({ item }) => item)
+})
+
 const visibleRepoOrderAtom = Atom.make((get) => {
 	const query = get(effectiveFilterQueryAtom)
 	if (query.length === 0) return [] as readonly string[]
@@ -409,8 +520,25 @@ const visibleIssueGroupsAtom = Atom.make((get) =>
 	groupBy(get(filteredIssuesAtom), (issue) => issue.repository, get(visibleIssueRepoOrderAtom)),
 )
 
+const auxiliaryGroupKey = (item: AuxiliaryItem) => {
+	if (item.repository) return item.repository
+	if (item.author) return item.author
+	return surfaceShortLabels[item.surface]
+}
+
+const visibleAuxiliaryRepoOrderAtom = Atom.make((get) => {
+	const query = get(effectiveFilterQueryAtom)
+	if (query.length === 0) return [] as readonly string[]
+	return [...new Set(get(filteredAuxiliaryItemsAtom).map(auxiliaryGroupKey))]
+})
+
+const visibleAuxiliaryGroupsAtom = Atom.make((get) =>
+	groupBy(get(filteredAuxiliaryItemsAtom), auxiliaryGroupKey, get(visibleAuxiliaryRepoOrderAtom)),
+)
+
 const visiblePullRequestsAtom = Atom.make((get) => get(visibleGroupsAtom).flatMap(([, pullRequests]) => pullRequests))
 const visibleIssuesAtom = Atom.make((get) => get(visibleIssueGroupsAtom).flatMap(([, issues]) => issues))
+const visibleAuxiliaryItemsAtom = Atom.make((get) => get(visibleAuxiliaryGroupsAtom).flatMap(([, items]) => items))
 
 const groupStartsAtom = Atom.make((get) => {
 	const groups = get(visibleGroupsAtom)
@@ -432,6 +560,16 @@ const issueGroupStartsAtom = Atom.make((get) => {
 	return starts
 })
 
+const auxiliaryGroupStartsAtom = Atom.make((get) => {
+	const groups = get(visibleAuxiliaryGroupsAtom)
+	const starts: number[] = []
+	for (let index = 0; index < groups.length; index++) {
+		if (index === 0) starts.push(0)
+		else starts.push(starts[index - 1]! + groups[index - 1]![1].length)
+	}
+	return starts
+})
+
 const selectedPullRequestAtom = Atom.make((get) => {
 	const pullRequests = get(visiblePullRequestsAtom)
 	const index = get(selectedIndexAtom)
@@ -442,6 +580,12 @@ const selectedIssueAtom = Atom.make((get) => {
 	const issues = get(visibleIssuesAtom)
 	const index = get(selectedIndexAtom)
 	return issues[index] ?? null
+})
+
+const selectedAuxiliaryItemAtom = Atom.make((get) => {
+	const items = get(visibleAuxiliaryItemsAtom)
+	const index = get(selectedIndexAtom)
+	return items[index] ?? null
 })
 
 const selectedDiffKeyAtom = Atom.make((get) => {
@@ -513,6 +657,10 @@ const createIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; r
 const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
 const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
 const openIssueInBrowserAtom = githubRuntime.fn<IssueItem>()((issue) => BrowserOpener.use((browser) => browser.openIssue(issue)))
+const openAuxiliaryInBrowserAtom = githubRuntime.fn<AuxiliaryItem>()((item) => BrowserOpener.use((browser) => browser.openAuxiliaryItem(item)))
+const markNotificationReadAtom = githubRuntime.fn<string>()((notificationId) => GitHubService.use((github) => github.markNotificationRead(notificationId)))
+const unstarRepositoryAtom = githubRuntime.fn<string>()((repository) => GitHubService.use((github) => github.unstarRepository(repository)))
+const unwatchRepositoryAtom = githubRuntime.fn<string>()((repository) => GitHubService.use((github) => github.unwatchRepository(repository)))
 const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.addIssueLabel(input.repository, input.number, input.label))
 )
@@ -561,6 +709,18 @@ const issueMetadataText = (issue: IssueItem) => {
 	]
 	if (issue.labels.length > 0) lines.push(`labels: ${issue.labels.map((label) => label.name).join(", ")}`)
 	if (issue.assignees.length > 0) lines.push(`assignees: ${issue.assignees.map((assignee) => `@${assignee}`).join(", ")}`)
+	return lines.join("\n")
+}
+
+const auxiliaryMetadataText = (item: AuxiliaryItem) => {
+	const lines = [
+		item.title,
+		item.repository ?? item.itemType,
+	]
+	if (item.url) lines.push(item.url)
+	if (item.state) lines.push(`state: ${item.state}`)
+	if (item.subtitle) lines.push(item.subtitle)
+	if (item.meta.length > 0) lines.push(`details: ${item.meta.join(", ")}`)
 	return lines.join("\n")
 }
 
@@ -643,13 +803,17 @@ const getDetailPlaceholderContent = ({
 	visibleCount,
 	filterText,
 }: DetailPlaceholderInput): DetailPlaceholderContent => {
-	const noun = surface === "issues" ? "issues" : "pull requests"
-	const singularNoun = surface === "issues" ? "issue" : "pull request"
+	const noun = surfaceLabels[surface]
+	const singularNoun = surface === "pullRequests"
+		? "pull request"
+		: surface === "issues"
+			? "issue"
+			: "item"
 
 	if (status === "loading") {
 		return {
 			title: `${loadingIndicator} Loading ${noun}`,
-			hint: retryProgress._tag === "Retrying" ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : `Fetching latest open ${noun}`,
+			hint: retryProgress._tag === "Retrying" ? `Retry ${retryProgress.attempt}/${retryProgress.max}` : `Fetching latest ${noun}`,
 		}
 	}
 
@@ -669,7 +833,7 @@ const getDetailPlaceholderContent = ({
 
 	if (visibleCount === 0) {
 		return {
-			title: `No open ${noun}`,
+			title: surface === "pullRequests" || surface === "issues" ? `No open ${noun}` : `No ${noun}`,
 			hint: "Press r to refresh",
 		}
 	}
@@ -686,15 +850,20 @@ export const App = () => {
 	const registry = useContext(RegistryContext)
 	const pullRequestResult = useAtomValue(pullRequestsAtom)
 	const issueResult = useAtomValue(issuesAtom)
+	const auxiliaryResult = useAtomValue(auxiliaryAtom)
 	const refreshPullRequestsAtom = useAtomRefresh(pullRequestsAtom)
 	const refreshIssuesAtom = useAtomRefresh(issuesAtom)
+	const refreshAuxiliaryAtom = useAtomRefresh(auxiliaryAtom)
 	const [activeSurface, setActiveSurface] = useAtom(activeSurfaceAtom)
 	const [activeView, setActiveView] = useAtom(activeViewAtom)
 	const [activeIssueView, setActiveIssueView] = useAtom(activeIssueViewAtom)
+	const [discussionRepository, setDiscussionRepository] = useAtom(discussionRepositoryAtom)
 	const setQueueLoadCache = useAtomSet(queueLoadCacheAtom)
 	const setIssueLoadCache = useAtomSet(issueLoadCacheAtom)
+	const setAuxiliaryLoadCache = useAtomSet(auxiliaryLoadCacheAtom)
 	const setQueueSelection = useAtomSet(queueSelectionAtom)
 	const setIssueSelection = useAtomSet(issueSelectionAtom)
+	const setAuxiliarySelection = useAtomSet(auxiliarySelectionAtom)
 	const [selectedIndex, setSelectedIndex] = useAtom(selectedIndexAtom)
 	const [notice, setNotice] = useAtom(noticeAtom)
 	const [filterQuery, setFilterQuery] = useAtom(filterQueryAtom)
@@ -787,6 +956,10 @@ export const App = () => {
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
 	const openIssueInBrowser = useAtomSet(openIssueInBrowserAtom, { mode: "promise" })
+	const openAuxiliaryInBrowser = useAtomSet(openAuxiliaryInBrowserAtom, { mode: "promise" })
+	const markNotificationRead = useAtomSet(markNotificationReadAtom, { mode: "promise" })
+	const unstarRepository = useAtomSet(unstarRepositoryAtom, { mode: "promise" })
+	const unwatchRepository = useAtomSet(unwatchRepositoryAtom, { mode: "promise" })
 	const terminalWidth = width ?? 100
 	const terminalHeight = height ?? 24
 	const contentWidth = Math.max(1, terminalWidth)
@@ -810,14 +983,18 @@ export const App = () => {
 	const didMountIssueQueueModeRef = useRef(false)
 	const lastPullRequestRefreshAtRef = useRef(0)
 	const lastIssueRefreshAtRef = useRef(0)
+	const lastAuxiliaryRefreshAtRef = useRef(0)
 	const terminalFocusedRef = useRef(true)
 	const terminalWasBlurredRef = useRef(false)
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
 	const issueStatusRef = useRef<LoadStatus>("loading")
+	const auxiliaryStatusRef = useRef<LoadStatus>("loading")
 	const refreshPullRequestsRef = useRef<(message?: string) => void>(() => {})
 	const refreshIssuesRef = useRef<(message?: string) => void>(() => {})
+	const refreshAuxiliaryRef = useRef<(message?: string) => void>(() => {})
 	const maybeRefreshPullRequestsRef = useRef<(minimumAgeMs: number) => void>(() => {})
 	const maybeRefreshIssuesRef = useRef<(minimumAgeMs: number) => void>(() => {})
+	const maybeRefreshAuxiliaryRef = useRef<(minimumAgeMs: number) => void>(() => {})
 	const detailScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const detailPreviewScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
@@ -860,35 +1037,49 @@ export const App = () => {
 
 	const pullRequestLoad = useAtomValue(pullRequestLoadAtom)
 	const issueLoad = useAtomValue(issueLoadAtom)
+	const auxiliaryLoad = useAtomValue(auxiliaryLoadAtom)
 	const pullRequests = useAtomValue(displayedPullRequestsAtom)
 	const issues = useAtomValue(displayedIssuesAtom)
+	const auxiliaryItems = useAtomValue(displayedAuxiliaryItemsAtom)
 	const pullRequestStatus = useAtomValue(pullRequestStatusAtom)
 	const issueStatus = useAtomValue(issueStatusAtom)
-	const activeStatus = activeSurface === "issues" ? issueStatus : pullRequestStatus
-	const isInitialLoading = activeSurface === "issues" ? issueStatus === "loading" && issues.length === 0 : pullRequestStatus === "loading" && pullRequests.length === 0
+	const auxiliaryStatus = useAtomValue(auxiliaryStatusAtom)
+	const activeStatus = activeSurface === "issues" ? issueStatus : activeSurface === "pullRequests" ? pullRequestStatus : auxiliaryStatus
+	const isInitialLoading = activeSurface === "issues"
+		? issueStatus === "loading" && issues.length === 0
+		: activeSurface === "pullRequests"
+			? pullRequestStatus === "loading" && pullRequests.length === 0
+			: auxiliaryStatus === "loading" && auxiliaryItems.length === 0
 	const pullRequestError = AsyncResult.isFailure(pullRequestResult) ? errorMessage(Cause.squash(pullRequestResult.cause)) : null
 	const issueError = AsyncResult.isFailure(issueResult) ? errorMessage(Cause.squash(issueResult.cause)) : null
+	const auxiliaryError = AsyncResult.isFailure(auxiliaryResult) ? errorMessage(Cause.squash(auxiliaryResult.cause)) : null
 	const username = AsyncResult.isSuccess(usernameResult) ? usernameResult.value : null
 	pullRequestStatusRef.current = pullRequestStatus
 	issueStatusRef.current = issueStatus
+	auxiliaryStatusRef.current = auxiliaryStatus
 
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
 
 	const visibleGroups = useAtomValue(visibleGroupsAtom)
 	const visibleIssueGroups = useAtomValue(visibleIssueGroupsAtom)
+	const visibleAuxiliaryGroups = useAtomValue(visibleAuxiliaryGroupsAtom)
 	const visiblePullRequests = useAtomValue(visiblePullRequestsAtom)
 	const visibleIssues = useAtomValue(visibleIssuesAtom)
+	const visibleAuxiliaryItems = useAtomValue(visibleAuxiliaryItemsAtom)
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
 	const selectedIssue = useAtomValue(selectedIssueAtom)
+	const selectedAuxiliaryItem = useAtomValue(selectedAuxiliaryItemAtom)
 	const selectedRepository = viewRepository(activeView)
 	const selectedIssueRepository = issueViewRepository(activeIssueView)
-	const activeRepository = activeSurface === "issues" ? selectedIssueRepository : selectedRepository
+	const activeRepository = activeSurface === "issues" ? selectedIssueRepository : activeSurface === "discussions" ? discussionRepository : selectedRepository
 	const activeViews = activePullRequestViews(activeView)
 	const activeIssueViewList = activeIssueViews(activeIssueView)
 	const currentQueueCacheKey = viewCacheKey(activeView)
 	const currentIssueQueueCacheKey = issueViewCacheKey(activeIssueView)
+	const currentAuxiliaryCacheKey = isAuxiliarySurface(activeSurface) ? auxiliaryCacheKey(activeSurface, activeSurface === "discussions" ? discussionRepository : null) : null
 	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
 	const loadedIssueCount = issueLoad?.data.length ?? 0
+	const loadedAuxiliaryCount = auxiliaryLoad?.data.length ?? 0
 	const hasMorePullRequests = Boolean(pullRequestLoad?.hasNextPage && loadedPullRequestCount < config.prFetchLimit)
 	const hasMoreIssues = Boolean(issueLoad?.hasNextPage && loadedIssueCount < config.prFetchLimit)
 	const isLoadingMorePullRequests = loadingMoreKey === currentQueueCacheKey
@@ -915,6 +1106,15 @@ export const App = () => {
 		isLoadingMore: isLoadingMoreIssues,
 	}), [visibleIssueGroups, issueStatus, issueError, visibleFilterText, filterMode, filterQuery, loadedIssueCount, hasMoreIssues, isLoadingMoreIssues])
 	const selectedIssueRowIndex = issueListRowIndex(issueListRows, selectedIssue?.url ?? null)
+	const auxiliaryListRows = useMemo(() => isAuxiliarySurface(activeSurface) ? buildAuxiliaryListRows({
+		surface: activeSurface,
+		groups: visibleAuxiliaryGroups,
+		status: auxiliaryStatus,
+		error: auxiliaryError,
+		filterText: visibleFilterText,
+		showFilterBar: filterMode || filterQuery.length > 0,
+	}) : [], [activeSurface, visibleAuxiliaryGroups, auxiliaryStatus, auxiliaryError, visibleFilterText, filterMode, filterQuery])
+	const selectedAuxiliaryRowIndex = auxiliaryListRowIndex(auxiliaryListRows, selectedAuxiliaryItem?.id ?? null)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
@@ -934,8 +1134,9 @@ export const App = () => {
 	)
 	const groupStarts = useAtomValue(groupStartsAtom)
 	const issueGroupStarts = useAtomValue(issueGroupStartsAtom)
-	const activeVisibleCount = activeSurface === "issues" ? visibleIssues.length : visiblePullRequests.length
-	const activeGroupStarts = activeSurface === "issues" ? issueGroupStarts : groupStarts
+	const auxiliaryGroupStarts = useAtomValue(auxiliaryGroupStartsAtom)
+	const activeVisibleCount = activeSurface === "issues" ? visibleIssues.length : activeSurface === "pullRequests" ? visiblePullRequests.length : visibleAuxiliaryItems.length
+	const activeGroupStarts = activeSurface === "issues" ? issueGroupStarts : activeSurface === "pullRequests" ? groupStarts : auxiliaryGroupStarts
 	const getCurrentGroupIndex = (current: number, starts: readonly number[]) => {
 		if (starts.length === 0) return 0
 		let low = 0
@@ -947,13 +1148,19 @@ export const App = () => {
 		}
 		return low
 	}
-	const activeLoadFetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt : pullRequestLoad?.fetchedAt
+	const activeLoadFetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt : activeSurface === "pullRequests" ? pullRequestLoad?.fetchedAt : auxiliaryLoad?.fetchedAt
 	const summaryRight = activeLoadFetchedAt
 		? `updated ${formatShortDate(activeLoadFetchedAt)} ${formatTimestamp(activeLoadFetchedAt)}`
 		: activeStatus === "loading"
-			? activeSurface === "issues" ? "loading issues..." : "loading pull requests..."
+			? `loading ${surfaceLabels[activeSurface]}...`
 			: ""
-	const activeViewLabel = activeSurface === "issues" ? `issues  ${issueViewLabel(activeIssueView)}` : `pull requests  ${viewLabel(activeView)}`
+	const activeViewLabel = activeSurface === "issues"
+		? `issues  ${issueViewLabel(activeIssueView)}`
+		: activeSurface === "pullRequests"
+			? `pull requests  ${viewLabel(activeView)}`
+			: activeSurface === "discussions" && discussionRepository
+				? `discussions  ${discussionRepository}`
+				: surfaceShortLabels[activeSurface]
 	const headerLeft = username ? `GHUI  ${username}  ${activeViewLabel}` : `GHUI  ${activeViewLabel}`
 	const headerLine = `${fitCell(headerLeft, Math.max(0, headerFooterWidth - summaryRight.length))}${summaryRight}`
 	const footerNotice = notice ? fitCell(notice, headerFooterWidth) : null
@@ -969,6 +1176,14 @@ export const App = () => {
 		if (index >= 0) {
 			setSelectedIndex(index)
 			setIssueSelection((current) => ({ ...current, [currentIssueQueueCacheKey]: index }))
+		}
+	}
+	const selectAuxiliaryById = (id: string) => {
+		if (!currentAuxiliaryCacheKey) return
+		const index = visibleAuxiliaryItems.findIndex((item) => item.id === id)
+		if (index >= 0) {
+			setSelectedIndex(index)
+			setAuxiliarySelection((current) => ({ ...current, [currentAuxiliaryCacheKey]: index }))
 		}
 	}
 	const updatePullRequest = (url: string, transform: (pullRequest: PullRequestItem) => PullRequestItem) => {
@@ -1007,9 +1222,28 @@ export const App = () => {
 		refreshIssuesAtom()
 	}
 	refreshIssuesRef.current = refreshIssues
+	const refreshAuxiliarySurface = (message?: string) => {
+		refreshGenerationRef.current += 1
+		if (message) {
+			setNotice(null)
+			setRefreshCompletionMessage(message)
+			setRefreshStartedAt(lastAuxiliaryRefreshAtRef.current)
+		}
+		refreshAuxiliaryAtom()
+	}
+	refreshAuxiliaryRef.current = refreshAuxiliarySurface
+	const rememberActiveSelection = () => {
+		if (activeSurface === "pullRequests") {
+			setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
+		} else if (activeSurface === "issues") {
+			setIssueSelection((current) => ({ ...current, [currentIssueQueueCacheKey]: selectedIndex }))
+		} else if (currentAuxiliaryCacheKey) {
+			setAuxiliarySelection((current) => ({ ...current, [currentAuxiliaryCacheKey]: selectedIndex }))
+		}
+	}
 	const showPullRequests = () => {
 		if (activeSurface === "pullRequests") return
-		setIssueSelection((current) => ({ ...current, [currentIssueQueueCacheKey]: selectedIndex }))
+		rememberActiveSelection()
 		setActiveSurface("pullRequests")
 		setSelectedIndex(registry.get(queueSelectionAtom)[currentQueueCacheKey] ?? 0)
 		setDetailFullView(false)
@@ -1019,9 +1253,21 @@ export const App = () => {
 	}
 	const showIssues = () => {
 		if (activeSurface === "issues") return
-		setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
+		rememberActiveSelection()
 		setActiveSurface("issues")
 		setSelectedIndex(registry.get(issueSelectionAtom)[currentIssueQueueCacheKey] ?? 0)
+		setDetailFullView(false)
+		setDiffFullView(false)
+		setDiffCommentMode(false)
+		setFilterDraft(filterQuery)
+		setNotice(null)
+	}
+	const showAuxiliarySurface = (surface: AuxiliarySurface) => {
+		if (activeSurface === surface) return
+		rememberActiveSelection()
+		const nextCacheKey = auxiliaryCacheKey(surface, surface === "discussions" ? discussionRepository : null)
+		setActiveSurface(surface)
+		setSelectedIndex(registry.get(auxiliarySelectionAtom)[nextCacheKey] ?? 0)
 		setDetailFullView(false)
 		setDiffFullView(false)
 		setDiffCommentMode(false)
@@ -1064,7 +1310,7 @@ export const App = () => {
 	}
 	const switchQueueMode = (delta: 1 | -1) => {
 		if (activeSurface === "issues") switchIssueViewTo(nextIssueView(activeIssueView, activeIssueViewList, delta))
-		else switchViewTo(nextView(activeView, activeViews, delta))
+		else if (activeSurface === "pullRequests") switchViewTo(nextView(activeView, activeViews, delta))
 	}
 	const loadMorePullRequests = () => {
 		if (!pullRequestLoad || !hasMorePullRequests || isLoadingMorePullRequests || !pullRequestLoad.endCursor) return false
@@ -1245,6 +1491,12 @@ export const App = () => {
 		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
 		refreshIssuesRef.current()
 	}
+	maybeRefreshAuxiliaryRef.current = (minimumAgeMs) => {
+		if (!terminalFocusedRef.current || auxiliaryStatusRef.current === "loading") return
+		const lastRefreshAt = lastAuxiliaryRefreshAtRef.current
+		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
+		refreshAuxiliaryRef.current()
+	}
 
 	useEffect(() => {
 		const fetchedAt = pullRequestLoad?.fetchedAt?.getTime()
@@ -1259,6 +1511,13 @@ export const App = () => {
 			lastIssueRefreshAtRef.current = fetchedAt
 		}
 	}, [issueLoad?.fetchedAt])
+
+	useEffect(() => {
+		const fetchedAt = auxiliaryLoad?.fetchedAt?.getTime()
+		if (fetchedAt !== undefined) {
+			lastAuxiliaryRefreshAtRef.current = fetchedAt
+		}
+	}, [auxiliaryLoad?.fetchedAt])
 
 	useEffect(() => {
 		if (!didMountQueueModeRef.current) {
@@ -1280,10 +1539,10 @@ export const App = () => {
 
 	useEffect(() => {
 		if (!refreshCompletionMessage || refreshStartedAt === null) return
-		const fetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt?.getTime() : pullRequestLoad?.fetchedAt?.getTime()
+		const fetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt?.getTime() : activeSurface === "pullRequests" ? pullRequestLoad?.fetchedAt?.getTime() : auxiliaryLoad?.fetchedAt?.getTime()
 		const isHydratingDetails = activeSurface === "issues"
 			? issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssue.timeline.length < selectedIssue.comments)
-			: pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
+			: activeSurface === "pullRequests" && pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
 		if (activeStatus === "ready" && fetchedAt !== undefined && fetchedAt !== refreshStartedAt && !isHydratingDetails) {
 			flashNotice(`✓ ${refreshCompletionMessage}`)
 			setRefreshCompletionMessage(null)
@@ -1293,7 +1552,7 @@ export const App = () => {
 			setRefreshCompletionMessage(null)
 			setRefreshStartedAt(null)
 		}
-	}, [refreshCompletionMessage, refreshStartedAt, activeStatus, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, pullRequests, issues])
+	}, [refreshCompletionMessage, refreshStartedAt, activeStatus, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, auxiliaryLoad?.fetchedAt, pullRequests, issues, auxiliaryItems])
 
 	useEffect(() => {
 		const handleFocus = () => {
@@ -1301,7 +1560,8 @@ export const App = () => {
 			setTerminalFocused(true)
 			if (terminalWasBlurredRef.current) {
 				if (activeSurface === "issues") maybeRefreshIssuesRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
-				else maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
+				else if (activeSurface === "pullRequests") maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
+				else maybeRefreshAuxiliaryRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
 			}
 		}
 		const handleBlur = () => {
@@ -1320,31 +1580,34 @@ export const App = () => {
 
 	useEffect(() => {
 		if (!terminalFocused) return
-		const lastRefreshAt = (activeSurface === "issues" ? lastIssueRefreshAtRef.current : lastPullRequestRefreshAtRef.current) || Date.now()
+		const lastRefreshAt = (activeSurface === "issues" ? lastIssueRefreshAtRef.current : activeSurface === "pullRequests" ? lastPullRequestRefreshAtRef.current : lastAuxiliaryRefreshAtRef.current) || Date.now()
 		const ageMs = Date.now() - lastRefreshAt
 		const delayMs = Math.max(0, FOCUSED_IDLE_REFRESH_MS - ageMs) + Math.floor(Math.random() * AUTO_REFRESH_JITTER_MS)
 		const timeout = globalThis.setTimeout(() => {
 			if (activeSurface === "issues") maybeRefreshIssuesRef.current(FOCUSED_IDLE_REFRESH_MS)
-			else maybeRefreshPullRequestsRef.current(FOCUSED_IDLE_REFRESH_MS)
+			else if (activeSurface === "pullRequests") maybeRefreshPullRequestsRef.current(FOCUSED_IDLE_REFRESH_MS)
+			else maybeRefreshAuxiliaryRef.current(FOCUSED_IDLE_REFRESH_MS)
 		}, delayMs)
 		return () => globalThis.clearTimeout(timeout)
-	}, [terminalFocused, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt])
+	}, [terminalFocused, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, auxiliaryLoad?.fetchedAt])
 
 	useEffect(() => {
 		setSelectedIndex((current) => {
-			const visibleCount = activeSurface === "issues" ? visibleIssues.length : visiblePullRequests.length
+			const visibleCount = activeSurface === "issues" ? visibleIssues.length : activeSurface === "pullRequests" ? visiblePullRequests.length : visibleAuxiliaryItems.length
 			if (visibleCount === 0) return 0
 			return Math.max(0, Math.min(current, visibleCount - 1))
 		})
-	}, [activeSurface, visiblePullRequests.length, visibleIssues.length])
+	}, [activeSurface, visiblePullRequests.length, visibleIssues.length, visibleAuxiliaryItems.length])
 
 	useEffect(() => {
 		if (activeSurface === "issues") {
 			setIssueSelection((current) => current[currentIssueQueueCacheKey] === selectedIndex ? current : { ...current, [currentIssueQueueCacheKey]: selectedIndex })
-		} else {
+		} else if (activeSurface === "pullRequests") {
 			setQueueSelection((current) => current[currentQueueCacheKey] === selectedIndex ? current : { ...current, [currentQueueCacheKey]: selectedIndex })
+		} else if (currentAuxiliaryCacheKey) {
+			setAuxiliarySelection((current) => current[currentAuxiliaryCacheKey] === selectedIndex ? current : { ...current, [currentAuxiliaryCacheKey]: selectedIndex })
 		}
-	}, [activeSurface, currentQueueCacheKey, currentIssueQueueCacheKey, selectedIndex])
+	}, [activeSurface, currentQueueCacheKey, currentIssueQueueCacheKey, currentAuxiliaryCacheKey, selectedIndex])
 
 	useEffect(() => {
 		if (filterMode || filterQuery.length > 0) return
@@ -1352,7 +1615,7 @@ export const App = () => {
 			if (visibleIssues.length === 0) return
 			const thresholdIndex = Math.max(0, visibleIssues.length - LOAD_MORE_SELECTION_THRESHOLD)
 			if (selectedIndex >= thresholdIndex) loadMoreIssues()
-		} else {
+		} else if (activeSurface === "pullRequests") {
 			if (visiblePullRequests.length === 0) return
 			const thresholdIndex = Math.max(0, visiblePullRequests.length - LOAD_MORE_SELECTION_THRESHOLD)
 			if (selectedIndex >= thresholdIndex) loadMorePullRequests()
@@ -1361,13 +1624,13 @@ export const App = () => {
 
 	useEffect(() => {
 		const scroll = prListScrollRef.current
-		const rowIndex = activeSurface === "issues" ? selectedIssueRowIndex : selectedPullRequestRowIndex
+		const rowIndex = activeSurface === "issues" ? selectedIssueRowIndex : activeSurface === "pullRequests" ? selectedPullRequestRowIndex : selectedAuxiliaryRowIndex
 		if (!scroll || rowIndex === null) return
 		const viewportHeight = scroll.viewport.height
 		if (viewportHeight <= 0) return
 		const nextTop = scrollTopForVisibleLine(scroll.scrollTop, viewportHeight, rowIndex, 2)
 		if (nextTop !== scroll.scrollTop) scroll.scrollTo({ x: 0, y: nextTop })
-	}, [activeSurface, selectedPullRequestRowIndex, selectedIssueRowIndex])
+	}, [activeSurface, selectedPullRequestRowIndex, selectedIssueRowIndex, selectedAuxiliaryRowIndex])
 
 	useEffect(() => {
 		setDiffFileIndex(0)
@@ -1434,7 +1697,12 @@ export const App = () => {
 	const isHydratingIssueDetails = issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssue.timeline.length < selectedIssue.comments)
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
 	const isRefreshingIssues = issueResult.waiting && issueLoad !== null
-	const hasActiveLoadingIndicator = (activeSurface === "issues" ? issueResult.waiting || isHydratingIssueDetails : pullRequestResult.waiting || isHydratingPullRequestDetails)
+	const isRefreshingAuxiliary = auxiliaryResult.waiting && auxiliaryLoad !== null
+	const hasActiveLoadingIndicator = (activeSurface === "issues"
+		? issueResult.waiting || isHydratingIssueDetails
+		: activeSurface === "pullRequests"
+			? pullRequestResult.waiting || isHydratingPullRequestDetails
+			: auxiliaryResult.waiting)
 		|| labelModal.loading || closeModal.running || mergeModal.loading || mergeModal.running || selectedDiffState?._tag === "Loading"
 	const loadingIndicator = LOADING_FRAMES[loadingFrame % LOADING_FRAMES.length]!
 
@@ -1498,6 +1766,7 @@ export const App = () => {
 	} : detailPlaceholderContent
 	const detailJunctions = isSelectedPullRequestDetailLoading ? [] : getDetailJunctionRows(selectedPullRequest, rightPaneWidth, true)
 	const issueDetailJunctions = isSelectedIssueDetailLoading ? [] : getIssueDetailJunctionRows(selectedIssue, rightPaneWidth)
+	const auxiliaryDetailJunctions = getAuxiliaryDetailJunctionRows(selectedAuxiliaryItem, rightPaneWidth)
 
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
@@ -1868,6 +2137,13 @@ export const App = () => {
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
+	const openSelectedAuxiliaryInBrowser = () => {
+		if (!selectedAuxiliaryItem) return
+		void openAuxiliaryInBrowser(selectedAuxiliaryItem)
+			.then(() => flashNotice(`Opened ${selectedAuxiliaryItem.title}`))
+			.catch((error) => flashNotice(errorMessage(error)))
+	}
+
 	const copySelectedPullRequestMetadata = () => {
 		if (!selectedPullRequest) return
 		void copyToClipboard(pullRequestMetadataText(selectedPullRequest))
@@ -1880,6 +2156,58 @@ export const App = () => {
 		void copyToClipboard(issueMetadataText(selectedIssue))
 			.then(() => flashNotice(`Copied #${selectedIssue.number} metadata`))
 			.catch((error) => flashNotice(errorMessage(error)))
+	}
+
+	const copySelectedAuxiliaryMetadata = () => {
+		if (!selectedAuxiliaryItem) return
+		void copyToClipboard(auxiliaryMetadataText(selectedAuxiliaryItem))
+			.then(() => flashNotice(`Copied ${selectedAuxiliaryItem.title}`))
+			.catch((error) => flashNotice(errorMessage(error)))
+	}
+
+	const removeAuxiliaryItem = (id: string) => {
+		if (!currentAuxiliaryCacheKey) return
+		setAuxiliaryLoadCache((current) => {
+			const load = current[currentAuxiliaryCacheKey]
+			if (!load) return current
+			return {
+				...current,
+				[currentAuxiliaryCacheKey]: {
+					...load,
+					data: load.data.filter((item) => item.id !== id),
+				},
+			}
+		})
+	}
+
+	const manageSelectedAuxiliary = () => {
+		if (!selectedAuxiliaryItem?.action) return
+		const item = selectedAuxiliaryItem
+		const previousLoad = currentAuxiliaryCacheKey ? registry.get(auxiliaryLoadCacheAtom)[currentAuxiliaryCacheKey] ?? null : null
+		removeAuxiliaryItem(item.id)
+		const restore = () => {
+			if (!currentAuxiliaryCacheKey || !previousLoad) return
+			setAuxiliaryLoadCache((current) => ({ ...current, [currentAuxiliaryCacheKey]: previousLoad }))
+		}
+		const run = item.action === "mark-notification-read"
+			? markNotificationRead(item.id)
+			: item.repository && item.action === "unstar-repository"
+				? unstarRepository(item.repository)
+				: item.repository && item.action === "unwatch-repository"
+					? unwatchRepository(item.repository)
+					: null
+		if (!run) return
+		const success = item.action === "mark-notification-read"
+			? "Marked notification read"
+			: item.action === "unstar-repository"
+				? `Unstarred ${item.repository}`
+				: `Unwatched ${item.repository}`
+		void run
+			.then(() => flashNotice(success))
+			.catch((error) => {
+				restore()
+				flashNotice(errorMessage(error))
+			})
 	}
 
 	const toggleSelectedPullRequestDraftStatus = () => {
@@ -2054,7 +2382,7 @@ export const App = () => {
 	}
 
 	const openLabelModal = () => {
-		const repository = activeSurface === "issues" ? selectedIssue?.repository : selectedPullRequest?.repository
+		const repository = activeSurface === "issues" ? selectedIssue?.repository : activeSurface === "pullRequests" ? selectedPullRequest?.repository : null
 		if (!repository) return
 		const cachedLabels = registry.get(labelCacheAtom)[repository]
 		if (cachedLabels) {
@@ -2235,7 +2563,15 @@ export const App = () => {
 		}
 		closeActiveModal()
 		if (activeSurface === "issues") switchIssueViewTo({ _tag: "Repository", repository })
-		else switchViewTo({ _tag: "Repository", repository })
+		else if (activeSurface === "pullRequests") switchViewTo({ _tag: "Repository", repository })
+		else if (activeSurface === "discussions") {
+			const nextCacheKey = auxiliaryCacheKey("discussions", repository)
+			rememberActiveSelection()
+			setDiscussionRepository(repository)
+			setSelectedIndex(registry.get(auxiliarySelectionAtom)[nextCacheKey] ?? 0)
+			setDetailFullView(false)
+			setFilterDraft(filterQuery)
+		}
 		flashNotice(`Opened ${repository}`)
 	}
 	const insertPastedText = (text: string) => {
@@ -2285,6 +2621,7 @@ export const App = () => {
 		activeSurface,
 		pullRequestStatus,
 		issueStatus,
+		auxiliaryStatus,
 		filterQuery,
 		filterMode,
 		selectedRepository: activeRepository,
@@ -2298,8 +2635,10 @@ export const App = () => {
 		loadedIssueCount,
 		hasMoreIssues,
 		isLoadingMoreIssues,
+		loadedAuxiliaryCount,
 		selectedPullRequest,
 		selectedIssue,
+		selectedAuxiliaryItem,
 		detailFullView,
 		diffFullView,
 		diffReady: selectedDiffState?._tag === "Ready",
@@ -2313,6 +2652,7 @@ export const App = () => {
 			openCommandPalette,
 			refreshPullRequests,
 			refreshIssues,
+			refreshAuxiliarySurface,
 			openFilter: () => {
 				setFilterDraft(filterQuery)
 				setFilterMode(true)
@@ -2330,6 +2670,7 @@ export const App = () => {
 			switchIssueViewTo,
 			showPullRequests,
 			showIssues,
+			showAuxiliarySurface,
 			openDetails: () => {
 				setDetailFullView(true)
 				setDetailScrollOffset(0)
@@ -2366,8 +2707,11 @@ export const App = () => {
 				if (selectedPullRequest) openSelectedPullRequestInBrowser(selectedPullRequest)
 			},
 			openIssueInBrowser: openSelectedIssueInBrowser,
+			openAuxiliaryItemInBrowser: openSelectedAuxiliaryInBrowser,
 			copyPullRequestMetadata: copySelectedPullRequestMetadata,
 			copyIssueMetadata: copySelectedIssueMetadata,
+			copyAuxiliaryItemMetadata: copySelectedAuxiliaryMetadata,
+			manageAuxiliaryItem: manageSelectedAuxiliary,
 			quit: () => renderer.destroy(),
 		},
 	})
@@ -2411,25 +2755,31 @@ export const App = () => {
 		enabled: () => globalKeymapActiveRef.current,
 		bindings: [
 			{ key: "/", cmd: () => runCommandByIdRef.current("filter.open") },
-			{ key: "r", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.refresh" : "pull.refresh") },
+			{ key: "r", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.refresh" : activeSurfaceRef.current === "pullRequests" ? "pull.refresh" : "aux.refresh") },
 			{ key: "t", cmd: () => runCommandByIdRef.current("theme.open") },
 			{ key: "i", cmd: () => runCommandByIdRef.current("surface.issues") },
 			{ key: "p", cmd: () => runCommandByIdRef.current("surface.pull-requests") },
+			{ key: "n", cmd: () => runCommandByIdRef.current("surface.notifications") },
+			{ key: "shift+d", cmd: () => runCommandByIdRef.current("surface.discussions") },
+			{ key: "w", cmd: () => runCommandByIdRef.current("surface.watchedRepos") },
 			{ key: "c", cmd: () => {
 				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
 			} },
 			{ key: "d", cmd: () => runCommandByIdRef.current("diff.open") },
-			{ key: "l", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.labels" : "pull.labels") },
+			{ key: "l", cmd: () => {
+				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.labels")
+				else if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.labels")
+			} },
 			{ key: "m", cmd: () => runCommandByIdRef.current("pull.merge") },
 			{ key: "shift+m", cmd: () => runCommandByIdRef.current("pull.merge") },
-			{ key: "x", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.close" : "pull.close") },
+			{ key: "x", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.close" : activeSurfaceRef.current === "pullRequests" ? "pull.close" : "aux.manage") },
 			{ key: "u", cmd: () => {
 				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
 			} },
-			{ key: "o", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.open-browser" : "pull.open-browser") },
+			{ key: "o", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.open-browser" : activeSurfaceRef.current === "pullRequests" ? "pull.open-browser" : "aux.open-browser") },
 			{ key: "s", cmd: () => runCommandByIdRef.current("pull.toggle-draft") },
 			{ key: "shift+s", cmd: () => runCommandByIdRef.current("pull.toggle-draft") },
-			{ key: "y", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.copy-metadata" : "pull.copy-metadata") },
+			{ key: "y", cmd: () => runCommandByIdRef.current(activeSurfaceRef.current === "issues" ? "issue.copy-metadata" : activeSurfaceRef.current === "pullRequests" ? "pull.copy-metadata" : "aux.copy-metadata") },
 			{ key: "return", cmd: () => runCommandByIdRef.current("detail.open") },
 		],
 	}), [])
@@ -2886,7 +3236,7 @@ export const App = () => {
 				return
 			}
 			if (plainKey && key.name === "x") {
-				runCommandById(activeSurface === "issues" ? "issue.close" : "pull.close")
+				runCommandById(activeSurface === "issues" ? "issue.close" : activeSurface === "pullRequests" ? "pull.close" : "aux.manage")
 				return
 			}
 			if (plainKey && key.name === "u" && activeSurface === "issues") {
@@ -2894,7 +3244,8 @@ export const App = () => {
 				return
 			}
 			if (plainKey && key.name === "l") {
-				runCommandById(activeSurface === "issues" ? "issue.labels" : "pull.labels")
+				if (activeSurface === "issues") runCommandById("issue.labels")
+				else if (activeSurface === "pullRequests") runCommandById("pull.labels")
 				return
 			}
 			if (plainKey && (key.name === "m" || key.name === "M") && activeSurface === "pullRequests" && selectedPullRequest) {
@@ -2906,7 +3257,7 @@ export const App = () => {
 				return
 			}
 			if (plainKey && key.name === "r") {
-				runCommandById(activeSurface === "issues" ? "issue.refresh" : "pull.refresh")
+				runCommandById(activeSurface === "issues" ? "issue.refresh" : activeSurface === "pullRequests" ? "pull.refresh" : "aux.refresh")
 				return
 			}
 			if (key.name === "home") {
@@ -2954,11 +3305,11 @@ export const App = () => {
 				return
 			}
 			if (plainKey && key.name === "o") {
-				runCommandById(activeSurface === "issues" ? "issue.open-browser" : "pull.open-browser")
+				runCommandById(activeSurface === "issues" ? "issue.open-browser" : activeSurface === "pullRequests" ? "pull.open-browser" : "aux.open-browser")
 				return
 			}
 			if (plainKey && key.name === "y") {
-				runCommandById(activeSurface === "issues" ? "issue.copy-metadata" : "pull.copy-metadata")
+				runCommandById(activeSurface === "issues" ? "issue.copy-metadata" : activeSurface === "pullRequests" ? "pull.copy-metadata" : "aux.copy-metadata")
 				return
 			}
 			return
@@ -2980,7 +3331,7 @@ export const App = () => {
 			runCommandById("filter.clear")
 			return
 		}
-		if (isWideLayout && (activeSurface === "issues" ? selectedIssue : selectedPullRequest) && !detailFullView && !diffFullView) {
+		if (isWideLayout && (activeSurface === "issues" ? selectedIssue : activeSurface === "pullRequests" ? selectedPullRequest : selectedAuxiliaryItem) && !detailFullView && !diffFullView) {
 			if (key.name === "home") {
 				scrollDetailPreviewTo(0)
 				return
@@ -3048,9 +3399,9 @@ export const App = () => {
 			return
 		}
 		if (key.name === "down" || key.name === "j") {
-			if (activeVisibleCount > 0 && selectedIndex >= activeVisibleCount - 1 && (activeSurface === "issues" ? hasMoreIssues : hasMorePullRequests)) {
+			if (activeVisibleCount > 0 && selectedIndex >= activeVisibleCount - 1 && (activeSurface === "issues" ? hasMoreIssues : activeSurface === "pullRequests" ? hasMorePullRequests : false)) {
 				if (activeSurface === "issues") loadMoreIssues()
-				else loadMorePullRequests()
+				else if (activeSurface === "pullRequests") loadMorePullRequests()
 				return
 			}
 			setSelectedIndex((current) => {
@@ -3080,6 +3431,12 @@ export const App = () => {
 		bodyLines: ISSUE_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
 	}) > wideBodyHeight
+	const wideFullscreenAuxiliaryDetailScrollable = getAuxiliaryDetailsPaneHeight({
+		item: selectedAuxiliaryItem,
+		contentWidth: fullscreenContentWidth,
+		bodyLines: AUXILIARY_BODY_SCROLL_LIMIT,
+		paneWidth: contentWidth,
+	}) > wideBodyHeight
 	const narrowFullscreenDetailScrollable = getDetailsPaneHeight({
 		pullRequest: selectedPullRequest,
 		contentWidth: fullscreenContentWidth,
@@ -3092,6 +3449,12 @@ export const App = () => {
 		bodyLines: ISSUE_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
 	}) > wideBodyHeight
+	const narrowFullscreenAuxiliaryDetailScrollable = getAuxiliaryDetailsPaneHeight({
+		item: selectedAuxiliaryItem,
+		contentWidth: fullscreenContentWidth,
+		bodyLines: AUXILIARY_BODY_SCROLL_LIMIT,
+		paneWidth: contentWidth,
+	}) > wideBodyHeight
 	const wideDetailHeaderHeight = getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true)
 	const wideDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideDetailHeaderHeight)
 	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth)
@@ -3100,6 +3463,10 @@ export const App = () => {
 	const wideIssueDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideIssueDetailHeaderHeight)
 	const wideIssueDetailBodyHeight = getScrollableIssueBodyHeight(selectedIssue, rightContentWidth)
 	const wideIssueDetailBodyScrollable = wideIssueDetailBodyHeight > wideIssueDetailBodyViewportHeight
+	const wideAuxiliaryDetailHeaderHeight = getAuxiliaryDetailHeaderHeight(selectedAuxiliaryItem, rightPaneWidth)
+	const wideAuxiliaryDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideAuxiliaryDetailHeaderHeight)
+	const wideAuxiliaryDetailBodyHeight = getScrollableAuxiliaryBodyHeight(selectedAuxiliaryItem, rightContentWidth)
+	const wideAuxiliaryDetailBodyScrollable = wideAuxiliaryDetailBodyHeight > wideAuxiliaryDetailBodyViewportHeight
 
 	const prListProps = {
 		groups: visibleGroups,
@@ -3126,6 +3493,17 @@ export const App = () => {
 		hasMore: hasMoreIssues,
 		isLoadingMore: isLoadingMoreIssues,
 		onSelectIssue: selectIssueByUrl,
+	} as const
+	const auxiliaryListProps = {
+		surface: isAuxiliarySurface(activeSurface) ? activeSurface : "notifications" as const,
+		groups: visibleAuxiliaryGroups,
+		selectedId: selectedAuxiliaryItem?.id ?? null,
+		status: auxiliaryStatus,
+		error: auxiliaryError,
+		filterText: visibleFilterText,
+		showFilterBar: filterMode || filterQuery.length > 0,
+		isFilterEditing: filterMode,
+		onSelectItem: selectAuxiliaryById,
 	} as const
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
@@ -3237,6 +3615,20 @@ export const App = () => {
 						/>
 					</scrollbox>
 				</box>
+			) : isWideLayout && detailFullView && isAuxiliarySurface(activeSurface) ? (
+				<box flexGrow={1} flexDirection="column">
+					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: wideFullscreenAuxiliaryDetailScrollable }}>
+						<AuxiliaryDetailsPane
+							item={selectedAuxiliaryItem}
+							contentWidth={fullscreenContentWidth}
+							bodyLines={fullscreenBodyLines}
+							bodyLineLimit={AUXILIARY_BODY_SCROLL_LIMIT}
+							paneWidth={contentWidth}
+							placeholderContent={detailPlaceholderContent}
+							themeId={themeId}
+						/>
+					</scrollbox>
+				</box>
 			) : isWideLayout && detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
 					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: wideFullscreenDetailScrollable }}>
@@ -3261,13 +3653,15 @@ export const App = () => {
 							<box paddingLeft={sectionPadding} paddingRight={0}>
 								{activeSurface === "issues" ? (
 									<IssueList key={`wide-issues-${leftContentWidth}`} {...issueListProps} contentWidth={leftContentWidth} />
+								) : isAuxiliarySurface(activeSurface) ? (
+									<AuxiliaryList key={`wide-aux-${activeSurface}-${leftContentWidth}`} {...auxiliaryListProps} contentWidth={leftContentWidth} />
 								) : (
 									<PullRequestList key={`wide-pulls-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
 								)}
 							</box>
 						</scrollbox>
 					</box>
-					<SeparatorColumn height={wideBodyHeight} junctionRows={activeSurface === "issues" ? issueDetailJunctions : detailJunctions} />
+					<SeparatorColumn height={wideBodyHeight} junctionRows={activeSurface === "issues" ? issueDetailJunctions : isAuxiliarySurface(activeSurface) ? auxiliaryDetailJunctions : detailJunctions} />
 					<box width={rightPaneWidth} height={wideBodyHeight} flexDirection="column">
 						{activeSurface === "issues" && isSelectedIssueDetailLoading && selectedIssue ? (
 							<>
@@ -3282,6 +3676,15 @@ export const App = () => {
 								</scrollbox>
 							</>
 						) : activeSurface === "issues" ? (
+							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
+						) : isAuxiliarySurface(activeSurface) && selectedAuxiliaryItem ? (
+							<>
+								<AuxiliaryDetailHeader item={selectedAuxiliaryItem} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
+								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideAuxiliaryDetailBodyScrollable }}>
+									<AuxiliaryDetailBody item={selectedAuxiliaryItem} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={AUXILIARY_BODY_SCROLL_LIMIT} themeId={themeId} />
+								</scrollbox>
+							</>
+						) : isAuxiliarySurface(activeSurface) ? (
 							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
 						) : isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 							<>
@@ -3316,6 +3719,20 @@ export const App = () => {
 						/>
 					</scrollbox>
 				</box>
+			) : detailFullView && isAuxiliarySurface(activeSurface) ? (
+				<box flexGrow={1} flexDirection="column">
+					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: narrowFullscreenAuxiliaryDetailScrollable }}>
+						<AuxiliaryDetailsPane
+							item={selectedAuxiliaryItem}
+							contentWidth={fullscreenContentWidth}
+							bodyLines={fullscreenBodyLines}
+							bodyLineLimit={AUXILIARY_BODY_SCROLL_LIMIT}
+							paneWidth={contentWidth}
+							placeholderContent={detailPlaceholderContent}
+							themeId={themeId}
+						/>
+					</scrollbox>
+				</box>
 			) : detailFullView ? (
 				<box flexGrow={1} flexDirection="column">
 					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: narrowFullscreenDetailScrollable }}>
@@ -3336,6 +3753,8 @@ export const App = () => {
 				<box key="narrow-main" height={wideBodyHeight} flexDirection="column">
 					{activeSurface === "issues" ? (
 						<IssueDetailsPane issue={selectedIssue} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
+					) : isAuxiliarySurface(activeSurface) ? (
+						<AuxiliaryDetailsPane item={selectedAuxiliaryItem} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} themeId={themeId} />
 					) : (
 						<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
 					)}
@@ -3345,6 +3764,8 @@ export const App = () => {
 							<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
 								{activeSurface === "issues" ? (
 									<IssueList key={`narrow-issues-${fullscreenContentWidth}`} {...issueListProps} contentWidth={fullscreenContentWidth} />
+								) : isAuxiliarySurface(activeSurface) ? (
+									<AuxiliaryList key={`narrow-aux-${activeSurface}-${fullscreenContentWidth}`} {...auxiliaryListProps} contentWidth={fullscreenContentWidth} />
 								) : (
 									<PullRequestList key={`narrow-pulls-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
 								)}
@@ -3370,12 +3791,13 @@ export const App = () => {
 						detailFullView={detailFullView}
 						diffFullView={diffFullView}
 						diffCommentMode={diffCommentMode}
-						hasSelection={activeSurface === "issues" ? selectedIssue !== null : selectedPullRequest !== null}
-						canCloseSelection={activeSurface === "issues" ? selectedIssue?.state === "open" : selectedPullRequest?.state === "open"}
+						hasSelection={activeSurface === "issues" ? selectedIssue !== null : activeSurface === "pullRequests" ? selectedPullRequest !== null : selectedAuxiliaryItem !== null}
+						canCloseSelection={activeSurface === "issues" ? selectedIssue?.state === "open" : activeSurface === "pullRequests" ? selectedPullRequest?.state === "open" : false}
 						canReopenSelection={activeSurface === "issues" && selectedIssue?.state === "closed"}
 						canCommentSelection={activeSurface === "issues" && selectedIssue?.state === "open"}
+						canManageSelection={Boolean(selectedAuxiliaryItem?.action)}
 						hasError={activeStatus === "error"}
-						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : isRefreshingPullRequests || isHydratingPullRequestDetails) || closeModal.running || mergeModal.running}
+						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : activeSurface === "pullRequests" ? isRefreshingPullRequests || isHydratingPullRequestDetails : isRefreshingAuxiliary) || closeModal.running || mergeModal.running}
 						loadingIndicator={loadingIndicator}
 						retryProgress={retryProgress}
 					/>
@@ -3384,7 +3806,7 @@ export const App = () => {
 			{labelModalActive ? (
 				<LabelModal
 					state={labelModal}
-					currentLabels={activeSurface === "issues" ? selectedIssue?.labels ?? [] : selectedPullRequest?.labels ?? []}
+					currentLabels={activeSurface === "issues" ? selectedIssue?.labels ?? [] : activeSurface === "pullRequests" ? selectedPullRequest?.labels ?? [] : []}
 					modalWidth={labelModalWidth}
 					modalHeight={labelModalHeight}
 					offsetLeft={labelModalLeft}

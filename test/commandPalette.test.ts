@@ -44,6 +44,17 @@ describe("command palette rows", () => {
 			"authored",
 		])
 	})
+
+	test("accepts GitHub-scoped surface commands", () => {
+		const rows = buildCommandPaletteRows([
+			command("notifications", "GitHub"),
+		])
+
+		expect(rows.map((row) => row._tag === "section" ? row.scope : row.command.id)).toEqual([
+			"GitHub",
+			"notifications",
+		])
+	})
 })
 
 describe("command palette scroll", () => {

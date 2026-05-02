@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { config } from "../config.js"
-import { DiffCommentSide, issueQueueSearchQualifier, pullRequestQueueSearchQualifier, type CheckItem, type CreatePullRequestCommentInput, type IssueComment, type IssueItem, type IssuePage, type IssueQueueMode, type IssueState, type ListIssuePageInput, type ListPullRequestPageInput, type Mergeable, type PullRequestItem, type PullRequestMergeAction, type PullRequestMergeInfo, type PullRequestPage, type PullRequestQueueMode, type PullRequestReviewComment, type ReviewStatus } from "../domain.js"
+import { DiffCommentSide, issueQueueSearchQualifier, pullRequestQueueSearchQualifier, type AuxiliaryItem, type CheckItem, type CreatePullRequestCommentInput, type IssueComment, type IssueItem, type IssuePage, type IssueQueueMode, type IssueState, type ListIssuePageInput, type ListPullRequestPageInput, type Mergeable, type PullRequestItem, type PullRequestMergeAction, type PullRequestMergeInfo, type PullRequestPage, type PullRequestQueueMode, type PullRequestReviewComment, type ReviewStatus } from "../domain.js"
 import { getMergeActionDefinition } from "../mergeActions.js"
 import { CommandError, CommandRunner, type JsonParseError } from "./CommandRunner.js"
 
@@ -204,6 +204,74 @@ const IssueCommentsResponseSchema = Schema.Union([
 	Schema.Array(Schema.Array(IssueCommentSchema)),
 ])
 
+const RestRepositorySchema = Schema.Struct({
+	full_name: Schema.String,
+	description: OptionalNullableString,
+	html_url: OptionalNullableString,
+	private: Schema.optionalKey(Schema.Boolean),
+	fork: Schema.optionalKey(Schema.Boolean),
+	archived: Schema.optionalKey(Schema.Boolean),
+	language: OptionalNullableString,
+	stargazers_count: OptionalNullableNumber,
+	forks_count: OptionalNullableNumber,
+	open_issues_count: OptionalNullableNumber,
+	updated_at: OptionalNullableString,
+	pushed_at: OptionalNullableString,
+	has_discussions: Schema.optionalKey(Schema.Boolean),
+})
+
+const RepositoryListResponseSchema = Schema.Union([
+	Schema.Array(RestRepositorySchema),
+	Schema.Array(Schema.Array(RestRepositorySchema)),
+])
+
+const NotificationResponseSchema = Schema.Struct({
+	id: Schema.String,
+	unread: Schema.Boolean,
+	reason: Schema.String,
+	updated_at: Schema.String,
+	subject: Schema.Struct({
+		title: Schema.String,
+		type: Schema.String,
+		url: OptionalNullableString,
+		latest_comment_url: OptionalNullableString,
+	}),
+	repository: Schema.Struct({
+		full_name: Schema.String,
+		html_url: OptionalNullableString,
+	}),
+})
+
+const NotificationListResponseSchema = Schema.Union([
+	Schema.Array(NotificationResponseSchema),
+	Schema.Array(Schema.Array(NotificationResponseSchema)),
+])
+
+const RawDiscussionNodeSchema = Schema.Struct({
+	id: Schema.String,
+	number: Schema.Number,
+	title: Schema.String,
+	body: Schema.NullOr(Schema.String),
+	url: Schema.String,
+	createdAt: Schema.String,
+	updatedAt: Schema.String,
+	answerChosenAt: OptionalNullableString,
+	upvoteCount: Schema.optionalKey(Schema.Number),
+	author: Schema.NullOr(RawAuthorSchema),
+	category: Schema.Struct({ name: Schema.String }),
+	comments: Schema.Struct({ totalCount: Schema.Number }),
+})
+
+const RepositoryDiscussionsResponseSchema = Schema.Struct({
+	data: Schema.Struct({
+		repository: Schema.NullOr(Schema.Struct({
+			discussions: Schema.Struct({
+				nodes: Schema.Array(Schema.NullOr(RawDiscussionNodeSchema)),
+			}),
+		})),
+	}),
+})
+
 type RawPullRequestSummaryNode = Schema.Schema.Type<typeof RawPullRequestSummaryNodeSchema>
 type RawPullRequestNode = Schema.Schema.Type<typeof RawPullRequestNodeSchema>
 type RawIssueNode = Schema.Schema.Type<typeof RawIssueNodeSchema>
@@ -211,6 +279,9 @@ type RawCheckContext = Schema.Schema.Type<typeof RawCheckContextSchema>
 type RawPullRequestComment = Schema.Schema.Type<typeof PullRequestCommentSchema>
 type RawPullRequestFile = Schema.Schema.Type<typeof PullRequestFileSchema>
 type RawIssueComment = Schema.Schema.Type<typeof IssueCommentSchema>
+type RestRepository = Schema.Schema.Type<typeof RestRepositorySchema>
+type RawNotification = Schema.Schema.Type<typeof NotificationResponseSchema>
+type RawDiscussionNode = Schema.Schema.Type<typeof RawDiscussionNodeSchema>
 
 type SearchResponse<Item> = {
 	readonly data: {
@@ -366,6 +437,29 @@ query RepositoryPullRequests($owner: String!, $name: String!, $first: Int!, $aft
       nodes {${SUMMARY_FIELDS_FRAGMENT}
       }
       pageInfo { hasNextPage endCursor }
+    }
+  }
+}
+`
+
+const repositoryDiscussionsQuery = `
+query RepositoryDiscussions($owner: String!, $name: String!) {
+  repository(owner: $owner, name: $name) {
+    discussions(first: 50, states: OPEN, orderBy: { field: UPDATED_AT, direction: DESC }) {
+      nodes {
+        id
+        number
+        title
+        body
+        url
+        createdAt
+        updatedAt
+        answerChosenAt
+        upvoteCount
+        author { login }
+        category { name }
+        comments { totalCount }
+      }
     }
   }
 }
@@ -605,6 +699,107 @@ const parseIssueComments = (response: Schema.Schema.Type<typeof IssueCommentsRes
 const flattenSlurpedPages = <Item>(response: readonly Item[] | readonly (readonly Item[])[]): readonly Item[] =>
 	Array.isArray(response[0]) ? (response as readonly (readonly Item[])[]).flat() : response as readonly Item[]
 
+const htmlUrlFromApiUrl = (repository: string, apiUrl: string | null | undefined, fallback: string | null) => {
+	if (!apiUrl) return fallback
+	const pullRequest = apiUrl.match(/\/repos\/[^/]+\/[^/]+\/pulls\/(\d+)(?:$|[/?#])/)
+	if (pullRequest?.[1]) return `https://github.com/${repository}/pull/${pullRequest[1]}`
+	const issue = apiUrl.match(/\/repos\/[^/]+\/[^/]+\/issues\/(\d+)(?:$|[/?#])/)
+	if (issue?.[1]) return `https://github.com/${repository}/issues/${issue[1]}`
+	const commit = apiUrl.match(/\/repos\/[^/]+\/[^/]+\/commits\/([^/?#]+)/)
+	if (commit?.[1]) return `https://github.com/${repository}/commit/${commit[1]}`
+	const release = apiUrl.match(/\/repos\/[^/]+\/[^/]+\/releases\/(?:tags\/)?([^/?#]+)/)
+	if (release?.[1]) return `https://github.com/${repository}/releases`
+	return fallback
+}
+
+const compactMeta = (items: readonly (string | null | undefined | false)[]) =>
+	items.flatMap((item) => item ? [item] : [])
+
+const repoDescription = (repository: RestRepository) => {
+	const description = repository.description?.trim()
+	return description && description.length > 0 ? description : "No description."
+}
+
+const repositoryVisibility = (repository: RestRepository) => compactMeta([
+	repository.private ? "private" : "public",
+	repository.fork ? "fork" : null,
+	repository.archived ? "archived" : null,
+	repository.language,
+	repository.has_discussions ? "discussions" : null,
+	typeof repository.stargazers_count === "number" ? `${repository.stargazers_count} stars` : null,
+	typeof repository.forks_count === "number" ? `${repository.forks_count} forks` : null,
+	typeof repository.open_issues_count === "number" ? `${repository.open_issues_count} open issues` : null,
+])
+
+const parseRepositoryItem = (surface: "stars" | "sharedRepos" | "watchedRepos", repository: RestRepository): AuxiliaryItem => {
+	const updatedAt = normalizeDate(repository.pushed_at) ?? normalizeDate(repository.updated_at)
+	const action = surface === "stars" ? "unstar-repository" : surface === "watchedRepos" ? "unwatch-repository" : null
+	return {
+		id: `${surface}:${repository.full_name}`,
+		surface,
+		repository: repository.full_name,
+		number: null,
+		title: repository.full_name,
+		subtitle: repository.description ?? null,
+		body: repoDescription(repository),
+		itemType: surface === "stars" ? "starred repo" : surface === "watchedRepos" ? "watched repo" : "shared repo",
+		state: repository.private ? "private" : "public",
+		author: null,
+		url: repository.html_url ?? `https://github.com/${repository.full_name}`,
+		updatedAt,
+		meta: repositoryVisibility(repository),
+		action,
+	}
+}
+
+const parseNotificationItem = (notification: RawNotification): AuxiliaryItem => {
+	const repository = notification.repository.full_name
+	const url = htmlUrlFromApiUrl(repository, notification.subject.latest_comment_url ?? notification.subject.url, notification.repository.html_url ?? `https://github.com/${repository}`)
+	return {
+		id: `notification:${notification.id}`,
+		surface: "notifications",
+		repository,
+		number: null,
+		title: notification.subject.title,
+		subtitle: `${notification.subject.type} in ${repository}`,
+		body: compactMeta([
+			`${notification.subject.type} notification`,
+			`reason: ${notification.reason}`,
+			notification.unread ? "unread" : "read",
+		]).join("\n"),
+		itemType: notification.subject.type,
+		state: notification.unread ? "unread" : "read",
+		author: null,
+		url,
+		updatedAt: new Date(notification.updated_at),
+		meta: compactMeta([notification.reason, notification.unread ? "unread" : "read"]),
+		action: notification.unread ? "mark-notification-read" : null,
+	}
+}
+
+const parseDiscussionItem = (repository: string, discussion: RawDiscussionNode): AuxiliaryItem => ({
+	id: `discussion:${repository}:${discussion.number}`,
+	surface: "discussions",
+	repository,
+	number: discussion.number,
+	title: discussion.title,
+	subtitle: `${discussion.category.name} in ${repository}`,
+	body: discussion.body ?? "",
+	itemType: "discussion",
+	state: discussion.answerChosenAt ? "answered" : "open",
+	author: discussion.author?.login ?? null,
+	url: discussion.url,
+	updatedAt: new Date(discussion.updatedAt),
+	meta: compactMeta([
+		discussion.category.name,
+		discussion.answerChosenAt ? "answered" : "open",
+		`${discussion.comments.totalCount} comments`,
+		typeof discussion.upvoteCount === "number" ? `${discussion.upvoteCount} upvotes` : null,
+		discussion.author ? `by ${discussion.author.login}` : null,
+	]),
+	action: null,
+})
+
 const parsePullRequestFiles = (response: Schema.Schema.Type<typeof PullRequestFilesResponseSchema>): readonly RawPullRequestFile[] =>
 	flattenSlurpedPages(response)
 
@@ -663,6 +858,14 @@ export class GitHubService extends Context.Service<GitHubService, {
 	readonly reopenIssue: (repository: string, number: number) => Effect.Effect<void, CommandError>
 	readonly getPullRequestDetails: (repository: string, number: number) => Effect.Effect<PullRequestItem, GitHubError>
 	readonly getAuthenticatedUser: () => Effect.Effect<string, GitHubError>
+	readonly listNotifications: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
+	readonly markNotificationRead: (notificationId: string) => Effect.Effect<void, CommandError>
+	readonly listRepositoryDiscussions: (repository: string | null) => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
+	readonly listStarredRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
+	readonly unstarRepository: (repository: string) => Effect.Effect<void, CommandError>
+	readonly listSharedRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
+	readonly listWatchedRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
+	readonly unwatchRepository: (repository: string) => Effect.Effect<void, CommandError>
 	readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
 	readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
 	readonly getPullRequestMergeInfo: (repository: string, number: number) => Effect.Effect<PullRequestMergeInfo, GitHubError>
@@ -841,6 +1044,64 @@ export class GitHubService extends Context.Service<GitHubService, {
 			const getAuthenticatedUser = () =>
 				ghJson("getAuthenticatedUser", ViewerSchema, ["api", "user"]).pipe(Effect.map((viewer) => viewer.login))
 
+			const listNotifications = () =>
+				ghJson("listNotifications", NotificationListResponseSchema, [
+					"api", "--method", "GET", "--paginate", "--slurp", "notifications",
+					"-f", "per_page=100",
+				]).pipe(Effect.map((response) => flattenSlurpedPages(response).map(parseNotificationItem)))
+
+			const markNotificationRead = (notificationId: string) => {
+				const threadId = notificationId.replace(/^notification:/, "")
+				return ghVoid("markNotificationRead", ["api", "--method", "PATCH", `notifications/threads/${threadId}`])
+			}
+
+			const listRepositoryDiscussions = Effect.fn("GitHubService.listRepositoryDiscussions")(function*(repository: string | null) {
+				if (!repository) return [] as readonly AuxiliaryItem[]
+				const repo = repositoryParts(repository)
+				if (!repo) {
+					return yield* new CommandError({ command: "gh", args: [], detail: `Invalid repository: ${repository}`, cause: repository })
+				}
+				const response = yield* command.runSchema(RepositoryDiscussionsResponseSchema, "gh", [
+					"api", "graphql",
+					"-f", `query=${repositoryDiscussionsQuery}`,
+					"-F", `owner=${repo.owner}`,
+					"-F", `name=${repo.name}`,
+				])
+				return response.data.repository?.discussions.nodes.flatMap((node) => node ? [parseDiscussionItem(repository, node)] : []) ?? []
+			})
+
+			const listRepositoryItems = (label: string, surface: "stars" | "sharedRepos" | "watchedRepos", args: readonly string[]) =>
+				ghJson(label, RepositoryListResponseSchema, args).pipe(
+					Effect.map((response) => flattenSlurpedPages(response).map((repository) => parseRepositoryItem(surface, repository))),
+				)
+
+			const listStarredRepositories = () =>
+				listRepositoryItems("listStarredRepositories", "stars", [
+					"api", "--method", "GET", "--paginate", "--slurp", "user/starred",
+					"-f", "per_page=100",
+					"-f", "sort=updated",
+				])
+
+			const unstarRepository = (repository: string) =>
+				ghVoid("unstarRepository", ["api", "--method", "DELETE", `user/starred/${repository}`])
+
+			const listSharedRepositories = () =>
+				listRepositoryItems("listSharedRepositories", "sharedRepos", [
+					"api", "--method", "GET", "--paginate", "--slurp", "user/repos",
+					"-f", "affiliation=collaborator",
+					"-f", "sort=updated",
+					"-f", "per_page=100",
+				])
+
+			const listWatchedRepositories = () =>
+				listRepositoryItems("listWatchedRepositories", "watchedRepos", [
+					"api", "--method", "GET", "--paginate", "--slurp", "user/subscriptions",
+					"-f", "per_page=100",
+				])
+
+			const unwatchRepository = (repository: string) =>
+				ghVoid("unwatchRepository", ["api", "--method", "DELETE", `repos/${repository}/subscription`])
+
 			const getPullRequestDiff = (repository: string, number: number) =>
 				ghJson("getPullRequestDiff", PullRequestFilesResponseSchema, [
 					"api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/files`,
@@ -939,6 +1200,14 @@ export class GitHubService extends Context.Service<GitHubService, {
 				reopenIssue,
 				getPullRequestDetails,
 				getAuthenticatedUser,
+				listNotifications,
+				markNotificationRead,
+				listRepositoryDiscussions,
+				listStarredRepositories,
+				unstarRepository,
+				listSharedRepositories,
+				listWatchedRepositories,
+				unwatchRepository,
 				getPullRequestDiff,
 				listPullRequestComments,
 				getPullRequestMergeInfo,

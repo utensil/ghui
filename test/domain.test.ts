@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { issueQueueSearchQualifier, pullRequestQueueSearchQualifier } from "../src/domain.js"
+import { auxiliarySurfaces, isAuxiliarySurface, issueQueueSearchQualifier, pullRequestQueueSearchQualifier, surfaceLabels } from "../src/domain.js"
 import { viewCacheKey } from "../src/pullRequestViews.js"
 
 describe("pullRequestQueueSearchQualifier", () => {
@@ -58,5 +58,19 @@ describe("viewCacheKey", () => {
 	test("queue view key is the mode literal", () => {
 		expect(viewCacheKey({ _tag: "Queue", mode: "authored", repository: null })).toBe("authored")
 		expect(viewCacheKey({ _tag: "Queue", mode: "review", repository: "owner/name" })).toBe("review")
+	})
+})
+
+describe("surfaces", () => {
+	test("identifies auxiliary GitHub surfaces", () => {
+		expect(auxiliarySurfaces.every(isAuxiliarySurface)).toBe(true)
+		expect(isAuxiliarySurface("issues")).toBe(false)
+		expect(isAuxiliarySurface("pullRequests")).toBe(false)
+	})
+
+	test("has labels for every auxiliary surface", () => {
+		for (const surface of auxiliarySurfaces) {
+			expect(surfaceLabels[surface].length).toBeGreaterThan(0)
+		}
 	})
 })
