@@ -3,7 +3,7 @@ import type { LoadStatus, PullRequestItem } from "../domain.js"
 import { daysOpen } from "../date.js"
 import { colors } from "./colors.js"
 import { fitCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
-import { pullRequestRowDisplay, repoColor, reviewIcon } from "./pullRequests.js"
+import { pullRequestRowDisplay, repoColor, repositoryOwner, reviewIcon, shortRepoName } from "./pullRequests.js"
 
 export type PullRequestGroups = Array<[string, PullRequestItem[]]>
 
@@ -11,6 +11,7 @@ export type PullRequestListRow =
 	| { readonly _tag: "title" }
 	| { readonly _tag: "filter" }
 	| { readonly _tag: "message"; readonly text: string; readonly color: string }
+	| { readonly _tag: "owner"; readonly owner: string }
 	| { readonly _tag: "group"; readonly repository: string; readonly pullRequests: readonly PullRequestItem[] }
 	| { readonly _tag: "pull-request"; readonly pullRequest: PullRequestItem; readonly groupPullRequests: readonly PullRequestItem[] }
 	| { readonly _tag: "load-more"; readonly text: string }
@@ -60,6 +61,16 @@ const GroupTitle = ({ label, color, filterText }: { label: string; color: string
 	</TextLine>
 )
 
+const RepositoryTitle = ({ repository, filterText }: { repository: string; filterText: string }) => {
+	const label = shortRepoName(repository)
+	return (
+		<TextLine>
+			<span fg={repoColor(repository)}>  * </span>
+			<span fg={repoColor(repository)} attributes={TextAttributes.BOLD}><MatchedCell text={label} width={label.length} query={filterText} /></span>
+		</TextLine>
+	)
+}
+
 export const buildPullRequestListRows = ({
 	groups,
 	status,
@@ -85,7 +96,13 @@ export const buildPullRequestListRows = ({
 	if (status === "loading" && itemCount === 0) rows.push({ _tag: "message", text: "- Loading pull requests...", color: colors.muted })
 	if (status === "error") rows.push({ _tag: "message", text: `- ${error ?? "Could not load pull requests."}`, color: colors.error })
 	if (status === "ready" && itemCount === 0) rows.push({ _tag: "message", text: filterText.length > 0 ? "- No matching pull requests." : "- No open pull requests.", color: colors.muted })
+	let currentOwner: string | null = null
 	for (const [repository, pullRequests] of groups) {
+		const owner = repositoryOwner(repository)
+		if (owner !== currentOwner) {
+			rows.push({ _tag: "owner", owner })
+			currentOwner = owner
+		}
 		rows.push({ _tag: "group", repository, pullRequests })
 		for (const pullRequest of pullRequests) rows.push({ _tag: "pull-request", pullRequest, groupPullRequests: pullRequests })
 	}
@@ -184,7 +201,8 @@ export const PullRequestList = ({
 				}
 				if (row._tag === "message") return <PlainLine key={`message-${index}`} text={row.text} fg={row.color} />
 				if (row._tag === "load-more") return <PlainLine key="load-more" text={row.text} fg={colors.muted} />
-				if (row._tag === "group") return <GroupTitle key={`group-${row.repository}`} label={row.repository} color={repoColor(row.repository)} filterText={filterText} />
+				if (row._tag === "owner") return <GroupTitle key={`owner-${row.owner}`} label={row.owner} color={repoColor(row.owner)} filterText={filterText} />
+				if (row._tag === "group") return <RepositoryTitle key={`group-${row.repository}`} repository={row.repository} filterText={filterText} />
 
 				const numWidth = groupNumberWidth(row.groupPullRequests)
 				const ageColWidth = groupAgeWidth(row.groupPullRequests)

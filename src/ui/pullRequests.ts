@@ -2,6 +2,7 @@ import type { PullRequestItem, PullRequestLabel, ReviewStatus } from "../domain.
 import { colors } from "./colors.js"
 
 export const shortRepoName = (repository: string) => repository.split("/")[1] ?? repository
+export const repositoryOwner = (repository: string) => repository.split("/", 1)[0] ?? repository
 
 export const repoColor = (repository: string) => colors.repos[shortRepoName(repository) as keyof typeof colors.repos] ?? colors.repos.default
 

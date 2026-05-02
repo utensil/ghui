@@ -106,18 +106,21 @@ export const buildMockIssues = (options: MockOptions): readonly IssueItem[] => {
 
 const buildAuxiliaryItem = (surface: AuxiliarySurface, index: number, options: Required<MockOptions>): AuxiliaryItem => {
 	const repository = `mock-org/repo-${index % options.repoCount}`
+	const repositoryName = repository.split("/")[1] ?? repository
 	const updatedAt = new Date(Date.now() - index * 3_600_000)
 	const repoUrl = `https://github.com/${repository}`
 	const titleBySurface = {
 		notifications: `Mock notification ${index + 1}`,
 		discussions: `Mock discussion ${index + 1}`,
-		stars: repository,
-		sharedRepos: repository,
-		watchedRepos: repository,
+		myRepos: repositoryName,
+		stars: repositoryName,
+		sharedRepos: repositoryName,
+		watchedRepos: repositoryName,
 	} satisfies Record<AuxiliarySurface, string>
 	const actionBySurface = {
 		notifications: "mark-notification-read",
 		discussions: null,
+		myRepos: null,
 		stars: "unstar-repository",
 		sharedRepos: null,
 		watchedRepos: "unwatch-repository",
@@ -193,6 +196,7 @@ export const MockGitHubService = {
 		const auxiliaryItems = {
 			notifications: buildMockAuxiliaryItems("notifications", options),
 			discussions: buildMockAuxiliaryItems("discussions", options),
+			myRepos: buildMockAuxiliaryItems("myRepos", options),
 			stars: buildMockAuxiliaryItems("stars", options),
 			sharedRepos: buildMockAuxiliaryItems("sharedRepos", options),
 			watchedRepos: buildMockAuxiliaryItems("watchedRepos", options),
@@ -241,6 +245,7 @@ export const MockGitHubService = {
 				listNotifications: () => Effect.succeed(auxiliaryItems.notifications),
 				markNotificationRead: () => Effect.void,
 				listRepositoryDiscussions: (repository) => Effect.succeed(repository ? auxiliaryItems.discussions.filter((item) => item.repository === repository) : auxiliaryItems.discussions),
+				listMyRepositories: () => Effect.succeed(auxiliaryItems.myRepos),
 				listStarredRepositories: () => Effect.succeed(auxiliaryItems.stars),
 				unstarRepository: () => Effect.void,
 				listSharedRepositories: () => Effect.succeed(auxiliaryItems.sharedRepos),

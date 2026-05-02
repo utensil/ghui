@@ -27,6 +27,26 @@ const pullRequest = (overrides: Partial<PullRequestItem> = {}): PullRequestItem 
 })
 
 describe("buildPullRequestListRows", () => {
+	test("renders owner headers above repository groups", () => {
+		const rows = buildPullRequestListRows({
+			groups: [
+				["owner/repo-a", [pullRequest({ repository: "owner/repo-a", number: 1, url: "https://github.com/owner/repo-a/pull/1" })]],
+				["owner/repo-b", [pullRequest({ repository: "owner/repo-b", number: 2, url: "https://github.com/owner/repo-b/pull/2" })]],
+				["other/repo-c", [pullRequest({ repository: "other/repo-c", number: 3, url: "https://github.com/other/repo-c/pull/3" })]],
+			],
+			status: "ready",
+			error: null,
+			filterText: "",
+			showFilterBar: false,
+			loadedCount: 3,
+			hasMore: false,
+			isLoadingMore: false,
+		})
+
+		expect(rows.map((row) => row._tag)).toEqual(["title", "owner", "group", "pull-request", "group", "pull-request", "owner", "group", "pull-request"])
+		expect(rows.filter((row) => row._tag === "owner").map((row) => row.owner)).toEqual(["owner", "other"])
+	})
+
 	test("shows a loaded-count footer when more pull requests are available", () => {
 		const rows = buildPullRequestListRows({
 			groups: [["owner/repo", [pullRequest()]]],

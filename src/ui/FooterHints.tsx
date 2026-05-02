@@ -63,7 +63,7 @@ const diffViewHints: readonly HintItem[] = [
 
 const isPullRequestSurface = (surface: AppSurface | undefined) => surface === "pullRequests"
 const isQueueSurface = (surface: AppSurface | undefined) => isPullRequestSurface(surface) || surface === "issues"
-const surfaceShortcutHint = "i/p/n/D/f/H/w"
+const surfaceShortcutHint = "i/p/n/D/R/f/H/w"
 const manageHintLabel = (ctx: HintsContext) => isQueueSurface(ctx.surface) ? "close" : ctx.manageLabel ?? "manage"
 
 const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [

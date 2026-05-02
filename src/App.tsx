@@ -11,7 +11,7 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, commandEnabled, filterCommands } from "./commands.js"
 import { config } from "./config.js"
-import { isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
+import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import { activeIssueViews, initialIssueView, issueViewCacheKey, issueViewEquals, issueViewLabel, issueViewMode, issueViewRepository, nextIssueView, type IssueView } from "./issueViews.js"
@@ -36,7 +36,7 @@ import { buildIssueListRows, issueListRowIndex, IssueList } from "./ui/IssueList
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
 import { CloseModal, CommentModal, CommentThreadModal, ConfirmActionModal, filterLabels, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialConfirmActionModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, ThemeModal, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type ConfirmActionModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type ThemeModalState } from "./ui/modals.js"
-import { groupBy, reviewLabel } from "./ui/pullRequests.js"
+import { groupBy, repositoryOwner, reviewLabel } from "./ui/pullRequests.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
@@ -94,6 +94,14 @@ interface DetailPlaceholderInput {
 	readonly filterText: string
 }
 
+type BackgroundRefreshTarget =
+	| { readonly _tag: "pullRequests" }
+	| { readonly _tag: "issues" }
+	| { readonly _tag: "auxiliary"; readonly surface: AuxiliarySurface; readonly repository: string | null; readonly cacheKey: string }
+
+const backgroundRefreshTargetKey = (target: BackgroundRefreshTarget) =>
+	target._tag === "auxiliary" ? `aux:${target.cacheKey}` : target._tag
+
 type DiffLineColorConfig = {
 	readonly gutter: string
 	readonly content: string
@@ -124,9 +132,11 @@ interface DetailHydration {
 }
 
 const PR_FETCH_RETRIES = 6
-const FOCUS_RETURN_REFRESH_MIN_MS = 60_000
 const FOCUSED_IDLE_REFRESH_MS = 5 * 60_000
 const AUTO_REFRESH_JITTER_MS = 10_000
+const STAGGERED_REFRESH_INITIAL_DELAY_MS = 5_000
+const STAGGERED_REFRESH_GAP_MS = 20_000
+const USER_INPUT_REFRESH_IDLE_MS = 1_500
 const DIFF_STICKY_HEADER_LINES = 2
 const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
@@ -135,6 +145,9 @@ const DETAIL_PREFETCH_BEHIND = 1
 const DETAIL_PREFETCH_AHEAD = 3
 const DETAIL_PREFETCH_CONCURRENCY = 3
 const DETAIL_PREFETCH_DELAY_MS = 120
+
+const isReactActEnvironment = () =>
+	(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT === true
 
 const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: readonly PullRequestItem[]) => {
 	const seen = new Set(existing.map((pullRequest) => pullRequest.url))
@@ -145,6 +158,22 @@ const appendPullRequestPage = (existing: readonly PullRequestItem[], incoming: r
 const appendIssuePage = (existing: readonly IssueItem[], incoming: readonly IssueItem[]) => {
 	const seen = new Set(existing.map((issue) => issue.url))
 	return [...existing, ...incoming.filter((issue) => !seen.has(issue.url))]
+}
+
+const mergeCachedIssueDetails = (incoming: readonly IssueItem[], existing: readonly IssueItem[] | undefined) => {
+	if (!existing) return incoming
+	const existingByUrl = new Map(existing.map((issue) => [issue.url, issue]))
+	return incoming.map((issue) => {
+		const cached = existingByUrl.get(issue.url)
+		if (!cached || !cached.detailLoaded && cached.timeline.length === 0) return issue
+		return {
+			...issue,
+			body: cached.detailLoaded ? cached.body : issue.body,
+			detailLoaded: cached.detailLoaded || issue.detailLoaded,
+			timeline: cached.timeline.length > 0 ? cached.timeline : issue.timeline,
+			comments: Math.max(issue.comments, cached.comments),
+		} satisfies IssueItem
+	})
 }
 
 const auxiliaryCacheKey = (surface: AuxiliarySurface, repository: string | null) =>
@@ -242,12 +271,14 @@ const issuesAtom = githubRuntime.atom(
 
 			yield* Atom.set(retryProgressAtom, initialRetryProgress)
 			const cache = yield* Atom.get(issueLoadCacheAtom)
+			const existingLoad = cache[cacheKey]
+			const data = mergeCachedIssueDetails(page.items, existingLoad?.data)
 			const load = {
 				view,
-				data: page.items,
+				data,
 				fetchedAt: new Date(),
 				endCursor: page.endCursor,
-				hasNextPage: page.hasNextPage && page.items.length < config.prFetchLimit,
+				hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
 			} satisfies IssueLoad
 			const nextCache = { ...cache }
 			delete nextCache[cacheKey]
@@ -270,6 +301,8 @@ const auxiliaryAtom = githubRuntime.atom(
 						return github.listNotifications()
 					case "discussions":
 						return github.listRepositoryDiscussions(repository)
+					case "myRepos":
+						return github.listMyRepositories()
 					case "stars":
 						return github.listStarredRepositories()
 					case "sharedRepos":
@@ -522,6 +555,9 @@ const visibleIssueGroupsAtom = Atom.make((get) =>
 )
 
 const auxiliaryGroupKey = (item: AuxiliaryItem) => {
+	if ((item.surface === "myRepos" || item.surface === "stars" || item.surface === "sharedRepos" || item.surface === "watchedRepos") && item.repository) {
+		return repositoryOwner(item.repository)
+	}
 	if (item.repository) return item.repository
 	if (item.author) return item.author
 	return surfaceShortLabels[item.surface]
@@ -635,6 +671,36 @@ const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: stri
 )
 const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listIssueComments(input.repository, input.number))
+)
+const loadAuxiliarySurfaceAtom = githubRuntime.fn<{ readonly surface: AuxiliarySurface; readonly repository: string | null }>()((input) =>
+	GitHubService.use((github) =>
+		Effect.gen(function*() {
+			const repository = input.surface === "discussions" ? input.repository : null
+			const data = yield* (() => {
+				switch (input.surface) {
+					case "notifications":
+						return github.listNotifications()
+					case "discussions":
+						return github.listRepositoryDiscussions(repository)
+					case "myRepos":
+						return github.listMyRepositories()
+					case "stars":
+						return github.listStarredRepositories()
+					case "sharedRepos":
+						return github.listSharedRepositories()
+					case "watchedRepos":
+						return github.listWatchedRepositories()
+				}
+			})()
+			return {
+				cacheKey: auxiliaryCacheKey(input.surface, repository),
+				surface: input.surface,
+				repository,
+				data,
+				fetchedAt: new Date(),
+			} satisfies AuxiliaryLoad
+		})
+	)
 )
 const getPullRequestMergeInfoAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.getPullRequestMergeInfo(input.repository, input.number))
@@ -997,6 +1063,7 @@ export const App = () => {
 	const markNotificationRead = useAtomSet(markNotificationReadAtom, { mode: "promise" })
 	const unstarRepository = useAtomSet(unstarRepositoryAtom, { mode: "promise" })
 	const unwatchRepository = useAtomSet(unwatchRepositoryAtom, { mode: "promise" })
+	const loadAuxiliarySurface = useAtomSet(loadAuxiliarySurfaceAtom, { mode: "promise" })
 	const terminalWidth = width ?? 100
 	const terminalHeight = height ?? 24
 	const contentWidth = Math.max(1, terminalWidth)
@@ -1021,18 +1088,21 @@ export const App = () => {
 	const lastPullRequestRefreshAtRef = useRef(0)
 	const lastIssueRefreshAtRef = useRef(0)
 	const lastAuxiliaryRefreshAtRef = useRef(0)
+	const pullRequestRefreshAtRef = useRef<Partial<Record<string, number>>>({})
+	const issueRefreshAtRef = useRef<Partial<Record<string, number>>>({})
+	const auxiliaryRefreshAtRef = useRef<Partial<Record<string, number>>>({})
+	const backgroundRefreshInFlightRef = useRef(new Set<string>())
 	const terminalFocusedRef = useRef(true)
-	const terminalWasBlurredRef = useRef(false)
+	const lastUserInputAtRef = useRef(Date.now())
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
 	const issueStatusRef = useRef<LoadStatus>("loading")
 	const auxiliaryStatusRef = useRef<LoadStatus>("loading")
 	const activeSurfaceRef = useRef(activeSurface)
+	const backgroundRefreshTargetsRef = useRef<readonly BackgroundRefreshTarget[]>([])
+	const refreshBackgroundTargetRef = useRef<(target: BackgroundRefreshTarget, minimumAgeMs: number) => void>(() => {})
 	const refreshPullRequestsRef = useRef<(message?: string) => void>(() => {})
 	const refreshIssuesRef = useRef<(message?: string) => void>(() => {})
 	const refreshAuxiliaryRef = useRef<(message?: string) => void>(() => {})
-	const maybeRefreshPullRequestsRef = useRef<(minimumAgeMs: number) => void>(() => {})
-	const maybeRefreshIssuesRef = useRef<(minimumAgeMs: number) => void>(() => {})
-	const maybeRefreshAuxiliaryRef = useRef<(minimumAgeMs: number) => void>(() => {})
 	const detailScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const detailPreviewScrollRef = useRef<ScrollBoxRenderable | null>(null)
 	const diffScrollRef = useRef<ScrollBoxRenderable | null>(null)
@@ -1123,6 +1193,14 @@ export const App = () => {
 	const currentQueueCacheKey = viewCacheKey(activeView)
 	const currentIssueQueueCacheKey = issueViewCacheKey(activeIssueView)
 	const currentAuxiliaryCacheKey = isAuxiliarySurface(activeSurface) ? auxiliaryCacheKey(activeSurface, activeSurface === "discussions" ? discussionRepository : null) : null
+	backgroundRefreshTargetsRef.current = [
+		{ _tag: "issues" },
+		{ _tag: "pullRequests" },
+		...auxiliarySurfaces.map((surface) => {
+			const repository = surface === "discussions" ? discussionRepository : null
+			return { _tag: "auxiliary" as const, surface, repository, cacheKey: auxiliaryCacheKey(surface, repository) }
+		}),
+	]
 	const loadedPullRequestCount = pullRequestLoad?.data.length ?? 0
 	const loadedIssueCount = issueLoad?.data.length ?? 0
 	const loadedAuxiliaryCount = auxiliaryLoad?.data.length ?? 0
@@ -1279,6 +1357,95 @@ export const App = () => {
 		refreshAuxiliaryAtom()
 	}
 	refreshAuxiliaryRef.current = refreshAuxiliarySurface
+	const refreshPullRequestsQuietly = () => {
+		const view = activeView
+		const cacheKey = viewCacheKey(view)
+		const repository = viewRepository(view)
+		return loadPullRequestPage({
+			mode: viewMode(view),
+			repository,
+			cursor: null,
+			pageSize: Math.min(pullRequestPageSize, config.prFetchLimit),
+		}).then((page) => {
+			const fetchedAt = new Date()
+			setQueueLoadCache((current) => {
+				const existingLoad = current[cacheKey]
+				const data = mergeCachedDetails(page.items, existingLoad?.data)
+				return {
+					...current,
+					[cacheKey]: {
+						view,
+						data,
+						fetchedAt,
+						endCursor: page.endCursor,
+						hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+					},
+				}
+			})
+			pullRequestRefreshAtRef.current[cacheKey] = fetchedAt.getTime()
+		})
+	}
+	const refreshIssuesQuietly = () => {
+		const view = activeIssueView
+		const cacheKey = issueViewCacheKey(view)
+		const repository = issueViewRepository(view)
+		return loadIssuePage({
+			mode: issueViewMode(view),
+			repository,
+			cursor: null,
+			pageSize: Math.min(pullRequestPageSize, config.prFetchLimit),
+		}).then((page) => {
+			const fetchedAt = new Date()
+			setIssueLoadCache((current) => {
+				const existingLoad = current[cacheKey]
+				const data = mergeCachedIssueDetails(page.items, existingLoad?.data)
+				return {
+					...current,
+					[cacheKey]: {
+						view,
+						data,
+						fetchedAt,
+						endCursor: page.endCursor,
+						hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+					},
+				}
+			})
+			issueRefreshAtRef.current[cacheKey] = fetchedAt.getTime()
+		})
+	}
+	const refreshAuxiliaryQuietly = (surface: AuxiliarySurface, repository: string | null) =>
+		loadAuxiliarySurface({ surface, repository }).then((load) => {
+			setAuxiliaryLoadCache((current) => ({ ...current, [load.cacheKey]: load }))
+			if (load.fetchedAt) auxiliaryRefreshAtRef.current[load.cacheKey] = load.fetchedAt.getTime()
+		})
+	const refreshBackgroundTarget = (target: BackgroundRefreshTarget, minimumAgeMs: number) => {
+		if (!terminalFocusedRef.current) return
+		if (Date.now() - lastUserInputAtRef.current < USER_INPUT_REFRESH_IDLE_MS) return
+		const key = backgroundRefreshTargetKey(target)
+		if (backgroundRefreshInFlightRef.current.has(key)) return
+		const lastRefreshAt = target._tag === "pullRequests"
+			? pullRequestRefreshAtRef.current[currentQueueCacheKey] ?? lastPullRequestRefreshAtRef.current
+			: target._tag === "issues"
+				? issueRefreshAtRef.current[currentIssueQueueCacheKey] ?? lastIssueRefreshAtRef.current
+				: auxiliaryRefreshAtRef.current[target.cacheKey] ?? 0
+		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
+		if (target._tag === "pullRequests" && pullRequestStatusRef.current === "loading") return
+		if (target._tag === "issues" && issueStatusRef.current === "loading") return
+		if (target._tag === "auxiliary" && activeSurfaceRef.current === target.surface && auxiliaryStatusRef.current === "loading") return
+
+		backgroundRefreshInFlightRef.current.add(key)
+		const run = target._tag === "pullRequests"
+			? refreshPullRequestsQuietly()
+			: target._tag === "issues"
+				? refreshIssuesQuietly()
+				: refreshAuxiliaryQuietly(target.surface, target.repository)
+		void run.catch(() => {
+			// Background refreshes keep stale cached data and avoid stealing the footer with errors.
+		}).finally(() => {
+			backgroundRefreshInFlightRef.current.delete(key)
+		})
+	}
+	refreshBackgroundTargetRef.current = refreshBackgroundTarget
 	const rememberActiveSelection = () => {
 		if (activeSurface === "pullRequests") {
 			setQueueSelection((current) => ({ ...current, [currentQueueCacheKey]: selectedIndex }))
@@ -1320,6 +1487,31 @@ export const App = () => {
 		setDiffCommentMode(false)
 		setFilterDraft(filterQuery)
 		setNotice(null)
+	}
+	const viewRepositoryPullRequests = (repository: string) => {
+		showPullRequests()
+		switchViewTo({ _tag: "Repository", repository })
+		flashNotice(`Viewing pull requests for ${repository}`)
+	}
+	const viewRepositoryIssues = (repository: string) => {
+		showIssues()
+		switchIssueViewTo({ _tag: "Repository", repository })
+		flashNotice(`Viewing issues for ${repository}`)
+	}
+	const viewRepositoryDiscussions = (repository: string) => {
+		rememberActiveSelection()
+		const nextCacheKey = auxiliaryCacheKey("discussions", repository)
+		setDiscussionRepository(repository)
+		setActiveSurface("discussions")
+		setSelectedIndex(registry.get(auxiliarySelectionAtom)[nextCacheKey] ?? 0)
+		setDetailFullView(false)
+		setDiffFullView(false)
+		setDiffCommentMode(false)
+		setFilterDraft(filterQuery)
+		setNotice(null)
+		setRefreshCompletionMessage(null)
+		setRefreshStartedAt(null)
+		flashNotice(`Viewing discussions for ${repository}`)
 	}
 	const switchViewTo = (view: PullRequestView) => {
 		if (viewEquals(view, activeView)) return
@@ -1540,45 +1732,30 @@ export const App = () => {
 		})
 		return true
 	}
-	maybeRefreshPullRequestsRef.current = (minimumAgeMs) => {
-		if (!terminalFocusedRef.current || pullRequestStatusRef.current === "loading") return
-		const lastRefreshAt = lastPullRequestRefreshAtRef.current
-		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
-		refreshPullRequestsRef.current()
-	}
-	maybeRefreshIssuesRef.current = (minimumAgeMs) => {
-		if (!terminalFocusedRef.current || issueStatusRef.current === "loading") return
-		const lastRefreshAt = lastIssueRefreshAtRef.current
-		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
-		refreshIssuesRef.current()
-	}
-	maybeRefreshAuxiliaryRef.current = (minimumAgeMs) => {
-		if (!terminalFocusedRef.current || auxiliaryStatusRef.current === "loading") return
-		const lastRefreshAt = lastAuxiliaryRefreshAtRef.current
-		if (lastRefreshAt > 0 && Date.now() - lastRefreshAt < minimumAgeMs) return
-		refreshAuxiliaryRef.current()
-	}
-
 	useEffect(() => {
 		const fetchedAt = pullRequestLoad?.fetchedAt?.getTime()
 		if (fetchedAt !== undefined) {
 			lastPullRequestRefreshAtRef.current = fetchedAt
+			pullRequestRefreshAtRef.current[currentQueueCacheKey] = fetchedAt
 		}
-	}, [pullRequestLoad?.fetchedAt])
+	}, [currentQueueCacheKey, pullRequestLoad?.fetchedAt])
 
 	useEffect(() => {
 		const fetchedAt = issueLoad?.fetchedAt?.getTime()
 		if (fetchedAt !== undefined) {
 			lastIssueRefreshAtRef.current = fetchedAt
+			issueRefreshAtRef.current[currentIssueQueueCacheKey] = fetchedAt
 		}
-	}, [issueLoad?.fetchedAt])
+	}, [currentIssueQueueCacheKey, issueLoad?.fetchedAt])
 
 	useEffect(() => {
+		const cacheKey = auxiliaryLoad?.cacheKey
 		const fetchedAt = auxiliaryLoad?.fetchedAt?.getTime()
-		if (fetchedAt !== undefined) {
+		if (cacheKey !== undefined && fetchedAt !== undefined) {
 			lastAuxiliaryRefreshAtRef.current = fetchedAt
+			auxiliaryRefreshAtRef.current[cacheKey] = fetchedAt
 		}
-	}, [auxiliaryLoad?.fetchedAt])
+	}, [auxiliaryLoad?.cacheKey, auxiliaryLoad?.fetchedAt])
 
 	useEffect(() => {
 		if (!didMountQueueModeRef.current) {
@@ -1619,17 +1796,8 @@ export const App = () => {
 		const handleFocus = () => {
 			terminalFocusedRef.current = true
 			setTerminalFocused(true)
-			const wasBlurred = terminalWasBlurredRef.current
-			terminalWasBlurredRef.current = false
-			if (wasBlurred) {
-				const focusedSurface = activeSurfaceRef.current
-				if (focusedSurface === "issues") maybeRefreshIssuesRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
-				else if (focusedSurface === "pullRequests") maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
-				else maybeRefreshAuxiliaryRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
-			}
 		}
 		const handleBlur = () => {
-			terminalWasBlurredRef.current = true
 			terminalFocusedRef.current = false
 			setTerminalFocused(false)
 		}
@@ -1643,17 +1811,33 @@ export const App = () => {
 	}, [renderer])
 
 	useEffect(() => {
+		if (isReactActEnvironment()) return
 		if (!terminalFocused) return
-		const lastRefreshAt = (activeSurface === "issues" ? lastIssueRefreshAtRef.current : activeSurface === "pullRequests" ? lastPullRequestRefreshAtRef.current : lastAuxiliaryRefreshAtRef.current) || Date.now()
-		const ageMs = Date.now() - lastRefreshAt
-		const delayMs = Math.max(0, FOCUSED_IDLE_REFRESH_MS - ageMs) + Math.floor(Math.random() * AUTO_REFRESH_JITTER_MS)
-		const timeout = globalThis.setTimeout(() => {
-			if (activeSurface === "issues") maybeRefreshIssuesRef.current(FOCUSED_IDLE_REFRESH_MS)
-			else if (activeSurface === "pullRequests") maybeRefreshPullRequestsRef.current(FOCUSED_IDLE_REFRESH_MS)
-			else maybeRefreshAuxiliaryRef.current(FOCUSED_IDLE_REFRESH_MS)
-		}, delayMs)
-		return () => globalThis.clearTimeout(timeout)
-	}, [terminalFocused, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, auxiliaryLoad?.fetchedAt])
+		let cancelled = false
+		const timers = new Set<ReturnType<typeof setTimeout>>()
+		const schedule = (delayMs: number, run: () => void) => {
+			const timer = globalThis.setTimeout(() => {
+				timers.delete(timer)
+				if (!cancelled) run()
+			}, delayMs)
+			timers.add(timer)
+		}
+		const runCycle = () => {
+			const targets = backgroundRefreshTargetsRef.current
+			for (let index = 0; index < targets.length; index++) {
+				const target = targets[index]!
+				schedule(index * STAGGERED_REFRESH_GAP_MS, () => refreshBackgroundTargetRef.current(target, FOCUSED_IDLE_REFRESH_MS))
+			}
+			const nextCycleDelay = targets.length * STAGGERED_REFRESH_GAP_MS + FOCUSED_IDLE_REFRESH_MS + Math.floor(Math.random() * AUTO_REFRESH_JITTER_MS)
+			schedule(nextCycleDelay, runCycle)
+		}
+		schedule(STAGGERED_REFRESH_INITIAL_DELAY_MS, runCycle)
+		return () => {
+			cancelled = true
+			for (const timer of timers) globalThis.clearTimeout(timer)
+			timers.clear()
+		}
+	}, [terminalFocused])
 
 	useEffect(() => {
 		setSelectedIndex((current) => {
@@ -2757,6 +2941,9 @@ export const App = () => {
 			showPullRequests,
 			showIssues,
 			showAuxiliarySurface,
+			viewRepositoryPullRequests,
+			viewRepositoryIssues,
+			viewRepositoryDiscussions,
 			openDetails: () => {
 				setDetailFullView(true)
 				setDetailScrollOffset(0)
@@ -2842,6 +3029,7 @@ export const App = () => {
 		if (key.name === "p") return runCommandById("surface.pull-requests")
 		if (key.name === "n") return runCommandById("surface.notifications")
 		if (key.name === "D" || key.name === "d" && key.shift) return runCommandById("surface.discussions")
+		if (key.name === "R" || key.name === "r" && key.shift) return runCommandById("surface.myRepos")
 		if (key.name === "f") return runCommandById("surface.stars")
 		if (key.name === "H" || key.name === "h" && key.shift) return runCommandById("surface.sharedRepos")
 		if (key.name === "w") return runCommandById("surface.watchedRepos")
@@ -2857,6 +3045,7 @@ export const App = () => {
 			{ key: "p", cmd: () => runCommandByIdRef.current("surface.pull-requests") },
 			{ key: "n", cmd: () => runCommandByIdRef.current("surface.notifications") },
 			{ key: "shift+d", cmd: () => runCommandByIdRef.current("surface.discussions") },
+			{ key: "shift+r", cmd: () => runCommandByIdRef.current("surface.myRepos") },
 			{ key: "f", cmd: () => runCommandByIdRef.current("surface.stars") },
 			{ key: "shift+h", cmd: () => runCommandByIdRef.current("surface.sharedRepos") },
 			{ key: "w", cmd: () => runCommandByIdRef.current("surface.watchedRepos") },
@@ -3133,6 +3322,7 @@ export const App = () => {
 	}), [])
 
 	useKeyboard((key) => {
+		lastUserInputAtRef.current = Date.now()
 		if (commandPaletteActive) {
 			if (isSingleLineInputKey(key)) {
 				setCommandPalette((current) => {

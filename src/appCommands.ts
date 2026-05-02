@@ -1,6 +1,6 @@
 import type { AppCommand } from "./commands.js"
 import { defineCommand } from "./commands.js"
-import { surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type IssueItem, type LoadStatus, type PullRequestItem } from "./domain.js"
+import { auxiliarySurfaces, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type IssueItem, type LoadStatus, type PullRequestItem } from "./domain.js"
 import type { DiffView, DiffWrapMode } from "./ui/diff.js"
 import { issueViewEquals, issueViewLabel, issueViewMode, type IssueView } from "./issueViews.js"
 import { type PullRequestView, viewEquals, viewLabel, viewMode } from "./pullRequestViews.js"
@@ -21,6 +21,9 @@ interface AppCommandActions {
 	readonly showPullRequests: () => void
 	readonly showIssues: () => void
 	readonly showAuxiliarySurface: (surface: AuxiliarySurface) => void
+	readonly viewRepositoryPullRequests: (repository: string) => void
+	readonly viewRepositoryIssues: (repository: string) => void
+	readonly viewRepositoryDiscussions: (repository: string) => void
 	readonly openDetails: () => void
 	readonly closeDetails: () => void
 	readonly openDiffView: () => void
@@ -162,16 +165,22 @@ export const buildAppCommands = ({
 		: activeSurface === "pullRequests"
 			? selectedPullRequestLabel
 			: selectedAuxiliaryLabel
+	const selectedCommandRepository = activeSurface === "issues"
+		? selectedIssue?.repository ?? null
+		: activeSurface === "pullRequests"
+			? selectedPullRequest?.repository ?? null
+			: selectedAuxiliaryItem?.repository ?? null
+	const noRepositoryReason = selectedCommandRepository ? null : "Select a repository-backed item first."
 	const activeSelectionDisabledReason = activeSurface === "issues"
 		? noIssueReason
 		: activeSurface === "pullRequests"
 			? noPullRequestReason
 			: noAuxiliaryReason
-	const auxiliarySurfaces = ["notifications", "discussions", "stars", "sharedRepos", "watchedRepos"] as const satisfies readonly AuxiliarySurface[]
 	const auxiliaryShortcut = (surface: AuxiliarySurface) => {
 		const shortcuts = {
 			notifications: "n",
 			discussions: "D",
+			myRepos: "R",
 			stars: "f",
 			sharedRepos: "H",
 			watchedRepos: "w",
@@ -282,11 +291,44 @@ export const buildAppCommands = ({
 			title: "Open repository...",
 			scope: "View",
 			subtitle: selectedRepository ? `Current repository: ${selectedRepository}` : "Enter owner/name or a GitHub URL",
-			disabledReason: activeSurface === "notifications" || activeSurface === "stars" || activeSurface === "sharedRepos" || activeSurface === "watchedRepos"
+			disabledReason: activeSurface === "notifications" || activeSurface === "myRepos" || activeSurface === "stars" || activeSurface === "sharedRepos" || activeSurface === "watchedRepos"
 				? "Repository picker is available for pull requests, issues, and discussions."
 				: null,
 			keywords: ["repo", "repository", "owner", "github"],
 			run: actions.openRepositoryPicker,
+		}),
+		defineCommand({
+			id: "repository.view-issues",
+			title: "View repository issues",
+			scope: "GitHub",
+			subtitle: selectedCommandRepository ?? "No repository selected",
+			disabledReason: noRepositoryReason,
+			keywords: ["repo", "repository", "issues", "filter"],
+			run: () => {
+				if (selectedCommandRepository) actions.viewRepositoryIssues(selectedCommandRepository)
+			},
+		}),
+		defineCommand({
+			id: "repository.view-pull-requests",
+			title: "View repository pull requests",
+			scope: "GitHub",
+			subtitle: selectedCommandRepository ?? "No repository selected",
+			disabledReason: noRepositoryReason,
+			keywords: ["repo", "repository", "prs", "pulls", "filter"],
+			run: () => {
+				if (selectedCommandRepository) actions.viewRepositoryPullRequests(selectedCommandRepository)
+			},
+		}),
+		defineCommand({
+			id: "repository.view-discussions",
+			title: "View repository discussions",
+			scope: "GitHub",
+			subtitle: selectedCommandRepository ?? "No repository selected",
+			disabledReason: noRepositoryReason,
+			keywords: ["repo", "repository", "discussions", "filter"],
+			run: () => {
+				if (selectedCommandRepository) actions.viewRepositoryDiscussions(selectedCommandRepository)
+			},
 		}),
 		...activeViews.map((view) => defineCommand({
 			id: view._tag === "Repository" ? "view.repository" : `view.${view.mode}`,

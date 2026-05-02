@@ -731,18 +731,19 @@ const repositoryVisibility = (repository: RestRepository) => compactMeta([
 	typeof repository.open_issues_count === "number" ? `${repository.open_issues_count} open issues` : null,
 ])
 
-const parseRepositoryItem = (surface: "stars" | "sharedRepos" | "watchedRepos", repository: RestRepository): AuxiliaryItem => {
+const parseRepositoryItem = (surface: "myRepos" | "stars" | "sharedRepos" | "watchedRepos", repository: RestRepository): AuxiliaryItem => {
 	const updatedAt = normalizeDate(repository.pushed_at) ?? normalizeDate(repository.updated_at)
 	const action = surface === "stars" ? "unstar-repository" : surface === "watchedRepos" ? "unwatch-repository" : null
+	const repositoryName = repository.full_name.split("/")[1] ?? repository.full_name
 	return {
 		id: `${surface}:${repository.full_name}`,
 		surface,
 		repository: repository.full_name,
 		number: null,
-		title: repository.full_name,
-		subtitle: repository.description ?? null,
+		title: repositoryName,
+		subtitle: repository.full_name,
 		body: repoDescription(repository),
-		itemType: surface === "stars" ? "starred repo" : surface === "watchedRepos" ? "watched repo" : "shared repo",
+		itemType: surface === "myRepos" ? "repository" : surface === "stars" ? "starred repo" : surface === "watchedRepos" ? "watched repo" : "shared repo",
 		state: repository.private ? "private" : "public",
 		author: null,
 		url: repository.html_url ?? `https://github.com/${repository.full_name}`,
@@ -861,6 +862,7 @@ export class GitHubService extends Context.Service<GitHubService, {
 	readonly listNotifications: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
 	readonly markNotificationRead: (notificationId: string) => Effect.Effect<void, CommandError>
 	readonly listRepositoryDiscussions: (repository: string | null) => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
+	readonly listMyRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
 	readonly listStarredRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
 	readonly unstarRepository: (repository: string) => Effect.Effect<void, CommandError>
 	readonly listSharedRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
@@ -1070,10 +1072,18 @@ export class GitHubService extends Context.Service<GitHubService, {
 				return response.data.repository?.discussions.nodes.flatMap((node) => node ? [parseDiscussionItem(repository, node)] : []) ?? []
 			})
 
-			const listRepositoryItems = (label: string, surface: "stars" | "sharedRepos" | "watchedRepos", args: readonly string[]) =>
+			const listRepositoryItems = (label: string, surface: "myRepos" | "stars" | "sharedRepos" | "watchedRepos", args: readonly string[]) =>
 				ghJson(label, RepositoryListResponseSchema, args).pipe(
 					Effect.map((response) => flattenSlurpedPages(response).map((repository) => parseRepositoryItem(surface, repository))),
 				)
+
+			const listMyRepositories = () =>
+				listRepositoryItems("listMyRepositories", "myRepos", [
+					"api", "--method", "GET", "--paginate", "--slurp", "user/repos",
+					"-f", "affiliation=owner",
+					"-f", "sort=updated",
+					"-f", "per_page=100",
+				])
 
 			const listStarredRepositories = () =>
 				listRepositoryItems("listStarredRepositories", "stars", [
@@ -1203,6 +1213,7 @@ export class GitHubService extends Context.Service<GitHubService, {
 				listNotifications,
 				markNotificationRead,
 				listRepositoryDiscussions,
+				listMyRepositories,
 				listStarredRepositories,
 				unstarRepository,
 				listSharedRepositories,

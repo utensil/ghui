@@ -4,17 +4,18 @@ export type LoadStatus = "loading" | "ready" | "error"
 
 export type PullRequestState = "open" | "closed" | "merged"
 
-export const appSurfaces = ["pullRequests", "issues", "notifications", "discussions", "stars", "sharedRepos", "watchedRepos"] as const
+export const appSurfaces = ["pullRequests", "issues", "notifications", "discussions", "myRepos", "stars", "sharedRepos", "watchedRepos"] as const
 export type AppSurface = (typeof appSurfaces)[number]
 export type AuxiliarySurface = Exclude<AppSurface, "pullRequests" | "issues">
 
-export const auxiliarySurfaces = ["notifications", "discussions", "stars", "sharedRepos", "watchedRepos"] as const satisfies readonly AuxiliarySurface[]
+export const auxiliarySurfaces = ["notifications", "discussions", "myRepos", "stars", "sharedRepos", "watchedRepos"] as const satisfies readonly AuxiliarySurface[]
 
 export const surfaceLabels = {
 	pullRequests: "pull requests",
 	issues: "issues",
 	notifications: "notifications",
 	discussions: "discussions",
+	myRepos: "my repositories",
 	stars: "starred repositories",
 	sharedRepos: "shared repositories",
 	watchedRepos: "watched repositories",
@@ -25,6 +26,7 @@ export const surfaceShortLabels = {
 	issues: "issues",
 	notifications: "notifications",
 	discussions: "discussions",
+	myRepos: "my repos",
 	stars: "stars",
 	sharedRepos: "shared with me",
 	watchedRepos: "watched",

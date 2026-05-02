@@ -3,7 +3,7 @@ import type { AuxiliaryItem, AuxiliarySurface, LoadStatus } from "../domain.js"
 import { surfaceShortLabels } from "../domain.js"
 import { formatRelativeDate } from "../date.js"
 import { colors } from "./colors.js"
-import { repoColor } from "./pullRequests.js"
+import { repoColor, repositoryOwner, shortRepoName } from "./pullRequests.js"
 import { fitCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
 
 export type AuxiliaryGroups = Array<[string, AuxiliaryItem[]]>
@@ -12,6 +12,7 @@ export type AuxiliaryListRow =
 	| { readonly _tag: "title" }
 	| { readonly _tag: "filter" }
 	| { readonly _tag: "message"; readonly text: string; readonly color: string }
+	| { readonly _tag: "owner"; readonly owner: string }
 	| { readonly _tag: "group"; readonly label: string; readonly items: readonly AuxiliaryItem[] }
 	| { readonly _tag: "item"; readonly item: AuxiliaryItem }
 
@@ -40,6 +41,19 @@ const GroupTitle = ({ label, filterText }: { label: string; filterText: string }
 	</TextLine>
 )
 
+const RepositoryTitle = ({ repository, filterText }: { repository: string; filterText: string }) => {
+	const label = shortRepoName(repository)
+	return (
+		<TextLine>
+			<span fg={repoColor(repository)}>  * </span>
+			<span fg={repoColor(repository)} attributes={TextAttributes.BOLD}><MatchedCell text={label} width={label.length} query={filterText} /></span>
+		</TextLine>
+	)
+}
+
+const isRepositoryListSurface = (surface: AuxiliarySurface) =>
+	surface === "myRepos" || surface === "stars" || surface === "sharedRepos" || surface === "watchedRepos"
+
 export const buildAuxiliaryListRows = ({
 	surface,
 	groups,
@@ -62,8 +76,15 @@ export const buildAuxiliaryListRows = ({
 	if (status === "loading" && itemCount === 0) rows.push({ _tag: "message", text: `- Loading ${label}...`, color: colors.muted })
 	if (status === "error") rows.push({ _tag: "message", text: `- ${error ?? `Could not load ${label}.`}`, color: colors.error })
 	if (status === "ready" && itemCount === 0) rows.push({ _tag: "message", text: filterText.length > 0 ? `- No matching ${label}.` : `- No ${label}.`, color: colors.muted })
+	let currentOwner: string | null = null
 	for (const [group, items] of groups) {
-		rows.push({ _tag: "group", label: group, items })
+		const isRepoList = isRepositoryListSurface(surface)
+		const owner = isRepoList ? group : group.includes("/") ? repositoryOwner(group) : group
+		if (owner !== currentOwner) {
+			rows.push({ _tag: "owner", owner })
+			currentOwner = owner
+		}
+		if (!isRepoList && group.includes("/")) rows.push({ _tag: "group", label: group, items })
 		for (const item of items) rows.push({ _tag: "item", item })
 	}
 	return rows
@@ -164,7 +185,8 @@ export const AuxiliaryList = ({
 					)
 				}
 				if (row._tag === "message") return <PlainLine key={`message-${index}`} text={row.text} fg={row.color} />
-				if (row._tag === "group") return <GroupTitle key={`group-${row.label}`} label={row.label} filterText={filterText} />
+				if (row._tag === "owner") return <GroupTitle key={`owner-${row.owner}`} label={row.owner} filterText={filterText} />
+				if (row._tag === "group") return <RepositoryTitle key={`group-${row.label}`} repository={row.label} filterText={filterText} />
 				return (
 					<AuxiliaryRow
 						key={row.item.id}
