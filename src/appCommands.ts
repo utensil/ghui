@@ -24,6 +24,7 @@ interface AppCommandActions {
 	readonly viewRepositoryPullRequests: (repository: string) => void
 	readonly viewRepositoryIssues: (repository: string) => void
 	readonly viewRepositoryDiscussions: (repository: string) => void
+	readonly viewRepositoryNotifications: (repository: string) => void
 	readonly openDetails: () => void
 	readonly closeDetails: () => void
 	readonly openDiffView: () => void
@@ -58,6 +59,7 @@ interface BuildAppCommandsInput {
 	readonly filterQuery: string
 	readonly filterMode: boolean
 	readonly selectedRepository: string | null
+	readonly activeAuxiliaryRepository: string | null
 	readonly activeViews: readonly PullRequestView[]
 	readonly activeView: PullRequestView
 	readonly activeIssueViews: readonly IssueView[]
@@ -92,6 +94,7 @@ export const buildAppCommands = ({
 	filterQuery,
 	filterMode,
 	selectedRepository,
+	activeAuxiliaryRepository,
 	activeViews,
 	activeView,
 	activeIssueViews,
@@ -275,14 +278,18 @@ export const buildAppCommands = ({
 		}),
 		...auxiliarySurfaces.map((surface) => {
 			const shortcut = auxiliaryShortcut(surface)
+			const repoScopedNotifications = surface === "notifications" && activeAuxiliaryRepository !== null
+			const alreadyShowingSurface = activeSurface === surface && !repoScopedNotifications
 			return defineCommand({
 				id: `surface.${surface}`,
-				title: `Show ${surfaceShortLabels[surface]}`,
+				title: repoScopedNotifications ? "Show all notifications" : `Show ${surfaceShortLabels[surface]}`,
 				scope: "View" as const,
-				subtitle: activeSurface === surface ? `Already showing ${surfaceLabels[surface]}` : `Switch to ${surfaceLabels[surface]}`,
+				subtitle: activeSurface === surface
+					? repoScopedNotifications ? `Currently filtered to ${activeAuxiliaryRepository}` : `Already showing ${surfaceLabels[surface]}`
+					: `Switch to ${surfaceLabels[surface]}`,
 				...(shortcut ? { shortcut } : {}),
 				keywords: [surface, surfaceLabels[surface], surfaceShortLabels[surface], "github"],
-				disabledReason: activeSurface === surface ? `Already showing ${surfaceLabels[surface]}.` : null,
+				disabledReason: alreadyShowingSurface ? `Already showing ${surfaceLabels[surface]}.` : null,
 				run: () => actions.showAuxiliarySurface(surface),
 			})
 		}),
@@ -328,6 +335,17 @@ export const buildAppCommands = ({
 			keywords: ["repo", "repository", "discussions", "filter"],
 			run: () => {
 				if (selectedCommandRepository) actions.viewRepositoryDiscussions(selectedCommandRepository)
+			},
+		}),
+		defineCommand({
+			id: "repository.view-notifications",
+			title: "View repository notifications",
+			scope: "GitHub",
+			subtitle: selectedCommandRepository ?? "No repository selected",
+			disabledReason: noRepositoryReason,
+			keywords: ["repo", "repository", "notifications", "inbox", "filter"],
+			run: () => {
+				if (selectedCommandRepository) actions.viewRepositoryNotifications(selectedCommandRepository)
 			},
 		}),
 		...activeViews.map((view) => defineCommand({
