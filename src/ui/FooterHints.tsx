@@ -23,6 +23,7 @@ interface HintsContext {
 	readonly canReopenSelection?: boolean
 	readonly canCommentSelection?: boolean
 	readonly canManageSelection?: boolean
+	readonly manageLabel?: string | null
 	readonly hasError: boolean
 	readonly isLoading: boolean
 	readonly loadingIndicator: string
@@ -62,6 +63,8 @@ const diffViewHints: readonly HintItem[] = [
 
 const isPullRequestSurface = (surface: AppSurface | undefined) => surface === "pullRequests"
 const isQueueSurface = (surface: AppSurface | undefined) => isPullRequestSurface(surface) || surface === "issues"
+const surfaceShortcutHint = "i/p/n/D/f/H/w"
+const manageHintLabel = (ctx: HintsContext) => isQueueSurface(ctx.surface) ? "close" : ctx.manageLabel ?? "manage"
 
 const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "esc", label: "back" },
@@ -69,13 +72,13 @@ const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "r", label: ctx.hasError ? "retry" : "refresh" },
 	{ key: "t", label: "theme" },
 	{ key: "tab", label: "queue", when: isQueueSurface(ctx.surface) },
-	{ key: "i/p/n", label: "surface" },
+	{ key: surfaceShortcutHint, label: "surface" },
 	{ key: "c", label: "comment", when: ctx.canCommentSelection ?? false },
 	{ key: "s", label: "state", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "d", label: "diff", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "l", label: "labels", when: isQueueSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "m", label: "merge", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
-	{ key: "x", label: isQueueSurface(ctx.surface) ? "close" : "manage", when: ctx.hasSelection && (ctx.canCloseSelection || (ctx.canManageSelection ?? false)) },
+	{ key: "x", label: manageHintLabel(ctx), when: ctx.hasSelection && (ctx.canCloseSelection || (ctx.canManageSelection ?? false)) },
 	{ key: "u", label: "reopen", when: ctx.hasSelection && (ctx.canReopenSelection ?? false) },
 	{ key: "o", label: "open" },
 	{ key: "y", label: "copy" },
@@ -92,12 +95,12 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		{ key: ctx.loadingIndicator, label: "loading", when: !retrying && ctx.isLoading, keyFg: colors.status.pending },
 		{ key: "r", label: "retry", when: ctx.hasError },
 		{ key: "tab", label: "queue", when: isQueueSurface(ctx.surface) },
-		{ key: "i/p/n", label: "surface" },
+		{ key: surfaceShortcutHint, label: "surface" },
 		{ key: "c", label: "comment", when: ctx.canCommentSelection ?? false },
 		{ key: "d", label: "diff", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 		{ key: "l", label: "labels", when: isQueueSurface(ctx.surface) && ctx.hasSelection },
 		{ key: "m", label: "merge", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
-		{ key: "x", label: isQueueSurface(ctx.surface) ? "close" : "manage", when: ctx.hasSelection && (ctx.canCloseSelection || (ctx.canManageSelection ?? false)) },
+		{ key: "x", label: manageHintLabel(ctx), when: ctx.hasSelection && (ctx.canCloseSelection || (ctx.canManageSelection ?? false)) },
 		{ key: "u", label: "reopen", when: ctx.hasSelection && (ctx.canReopenSelection ?? false) },
 		{ key: "o", label: "open", when: ctx.hasSelection },
 		{ key: "y", label: "copy", when: ctx.hasSelection },

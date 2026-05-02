@@ -218,7 +218,7 @@ export const MockGitHubService = {
 				listOpenPullRequestDetails: (mode: PullRequestQueueMode, repository: string | null) => Effect.succeed(filterByView(mode, repository, items)),
 				listOpenIssuePage: (input) => Effect.succeed(pageIssueItems(filterIssuesByView(input.mode, input.repository, issues, username), input.cursor, input.pageSize)),
 				getIssueDetails: (repository, number) => Effect.succeed(findIssue(repository, number)),
-				listIssueComments: (_repo, number) => Effect.succeed(Array.from({ length: number % 3 }, (_, index) => ({
+				listIssueComments: (_repo, number) => Effect.succeed(Array.from({ length: Math.max(0, number - 2000) % 4 }, (_, index) => ({
 					id: `issue-comment:${number}:${index}`,
 					author: index % 2 === 0 ? username : "reviewer",
 					body: `Mock issue comment ${index + 1} on #${number}`,

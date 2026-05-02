@@ -35,7 +35,7 @@ import { ISSUE_BODY_SCROLL_LIMIT, IssueDetailBody, IssueDetailHeader, IssueDetai
 import { buildIssueListRows, issueListRowIndex, IssueList } from "./ui/IssueList.js"
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
-import { CloseModal, CommentModal, CommentThreadModal, filterLabels, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, ThemeModal, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type ThemeModalState } from "./ui/modals.js"
+import { CloseModal, CommentModal, CommentThreadModal, ConfirmActionModal, filterLabels, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialConfirmActionModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, ThemeModal, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type ConfirmActionModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type ThemeModalState } from "./ui/modals.js"
 import { groupBy, reviewLabel } from "./ui/pullRequests.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
@@ -318,6 +318,7 @@ const diffCommentModeAtom = Atom.make(false)
 const diffCommentAnchorIndexAtom = Atom.make(0)
 const diffCommentThreadsAtom = Atom.make<Record<string, readonly PullRequestReviewComment[]>>({}).pipe(Atom.keepAlive)
 const diffCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
+const issueCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready" | "error">>({}).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
 const activeModalAtom = Atom.make<Modal>(initialModal)
@@ -724,6 +725,37 @@ const auxiliaryMetadataText = (item: AuxiliaryItem) => {
 	return lines.join("\n")
 }
 
+const auxiliaryActionSpec = (item: Pick<AuxiliaryItem, "action" | "repository" | "title"> | null) => {
+	if (item?.action === "mark-notification-read") {
+		return {
+			actionLabel: "Mark notification read",
+			confirmLabel: "mark read",
+			footerLabel: "read?",
+			description: "This removes the notification from the unread queue.",
+			success: "Marked notification read",
+		}
+	}
+	if (item?.action === "unstar-repository") {
+		return {
+			actionLabel: "Unstar repository",
+			confirmLabel: "unstar",
+			footerLabel: "unstar?",
+			description: "This removes the repository from your starred repositories.",
+			success: item.repository ? `Unstarred ${item.repository}` : "Unstarred repository",
+		}
+	}
+	if (item?.action === "unwatch-repository") {
+		return {
+			actionLabel: "Unwatch repository",
+			confirmLabel: "unwatch",
+			footerLabel: "unwatch?",
+			description: "This stops watching the repository for notifications.",
+			success: item.repository ? `Unwatched ${item.repository}` : "Unwatched repository",
+		}
+	}
+	return null
+}
+
 const pullRequestDetailKey = (pullRequest: PullRequestItem) => `${pullRequest.url}:${pullRequest.headRefOid}`
 const pullRequestRevisionAtomKey = (pullRequest: PullRequestItem) => `${pullRequest.repository}\u0000${pullRequest.number}\u0000${pullRequest.headRefOid}`
 const parsePullRequestRevisionAtomKey = (key: string, label: string) => {
@@ -737,6 +769,7 @@ const parsePullRequestDetailAtomKey = (key: string) => parsePullRequestRevisionA
 const parsePullRequestDiffAtomKey = (key: string) => parsePullRequestRevisionAtomKey(key, "diff")
 const issueDetailKey = (issue: IssueItem) => `${issue.repository}\u0000${issue.number}`
 const issueDetailAtomKey = issueDetailKey
+const issueCommentsKey = (issue: Pick<IssueItem, "repository" | "number">) => `${issue.repository}\u0000${issue.number}:comments`
 const parseIssueDetailAtomKey = (key: string) => {
 	const [repository, number] = key.split("\u0000")
 	if (!repository || !number) throw new Error(`Invalid issue detail key: ${key}`)
@@ -882,11 +915,13 @@ export const App = () => {
 	const [diffCommentThreads, setDiffCommentThreads] = useAtom(diffCommentThreadsAtom)
 	const setDiffCommentsLoaded = useAtomSet(diffCommentsLoadedAtom)
 	const setPullRequestDiffCache = useAtomSet(pullRequestDiffCacheAtom)
+	const [issueCommentsLoaded, setIssueCommentsLoaded] = useAtom(issueCommentsLoadedAtom)
 	const [activeModal, setActiveModal] = useAtom(activeModalAtom)
 	const [themeId, setThemeId] = useAtom(themeIdAtom)
 	const closeActiveModal = () => setActiveModal(initialModal)
 	const labelModalActive = Modal.$is("Label")(activeModal)
 	const closeModalActive = Modal.$is("Close")(activeModal)
+	const confirmActionModalActive = Modal.$is("ConfirmAction")(activeModal)
 	const mergeModalActive = Modal.$is("Merge")(activeModal)
 	const commentModalActive = Modal.$is("Comment")(activeModal)
 	const commentThreadModalActive = Modal.$is("CommentThread")(activeModal)
@@ -895,6 +930,7 @@ export const App = () => {
 	const openRepositoryModalActive = Modal.$is("OpenRepository")(activeModal)
 	const labelModal: LabelModalState = labelModalActive ? activeModal : initialLabelModalState
 	const closeModal: CloseModalState = closeModalActive ? activeModal : initialCloseModalState
+	const confirmActionModal: ConfirmActionModalState = confirmActionModalActive ? activeModal : initialConfirmActionModalState
 	const mergeModal: MergeModalState = mergeModalActive ? activeModal : initialMergeModalState
 	const commentModal: CommentModalState = commentModalActive ? activeModal : initialCommentModalState
 	const commentThreadModal: CommentThreadModalState = commentThreadModalActive ? activeModal : initialCommentThreadModalState
@@ -913,6 +949,7 @@ export const App = () => {
 		})
 	const setLabelModal = makeModalSetter("Label")
 	const setCloseModal = makeModalSetter("Close")
+	const setConfirmActionModal = makeModalSetter("ConfirmAction")
 	const setMergeModal = makeModalSetter("Merge")
 	const setCommentModal = makeModalSetter("Comment")
 	const setCommentThreadModal = makeModalSetter("CommentThread")
@@ -989,6 +1026,7 @@ export const App = () => {
 	const pullRequestStatusRef = useRef<LoadStatus>("loading")
 	const issueStatusRef = useRef<LoadStatus>("loading")
 	const auxiliaryStatusRef = useRef<LoadStatus>("loading")
+	const activeSurfaceRef = useRef(activeSurface)
 	const refreshPullRequestsRef = useRef<(message?: string) => void>(() => {})
 	const refreshIssuesRef = useRef<(message?: string) => void>(() => {})
 	const refreshAuxiliaryRef = useRef<(message?: string) => void>(() => {})
@@ -1057,6 +1095,7 @@ export const App = () => {
 	pullRequestStatusRef.current = pullRequestStatus
 	issueStatusRef.current = issueStatus
 	auxiliaryStatusRef.current = auxiliaryStatus
+	activeSurfaceRef.current = activeSurface
 
 	const visibleFilterText = filterMode ? filterDraft : filterQuery
 
@@ -1069,6 +1108,13 @@ export const App = () => {
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
 	const selectedIssue = useAtomValue(selectedIssueAtom)
 	const selectedAuxiliaryItem = useAtomValue(selectedAuxiliaryItemAtom)
+	const selectedIssueCommentsKey = selectedIssue ? issueCommentsKey(selectedIssue) : null
+	const selectedIssueCommentsState = selectedIssueCommentsKey ? issueCommentsLoaded[selectedIssueCommentsKey] : undefined
+	const selectedIssueCommentsPending = selectedIssue !== null
+		&& selectedIssue.comments > 0
+		&& selectedIssue.timeline.length < selectedIssue.comments
+		&& selectedIssueCommentsState === undefined
+	const selectedIssueCommentsLoading = selectedIssueCommentsState === "loading" || selectedIssueCommentsPending
 	const selectedRepository = viewRepository(activeView)
 	const selectedIssueRepository = issueViewRepository(activeIssueView)
 	const activeRepository = activeSurface === "issues" ? selectedIssueRepository : activeSurface === "discussions" ? discussionRepository : selectedRepository
@@ -1214,6 +1260,7 @@ export const App = () => {
 		refreshGenerationRef.current += 1
 		setLoadingMoreKey(null)
 		setIssueOverrides({})
+		setIssueCommentsLoaded({})
 		if (message) {
 			setNotice(null)
 			setRefreshCompletionMessage(message)
@@ -1460,7 +1507,9 @@ export const App = () => {
 	}
 	const hydrateIssueComments = (issue: IssueItem, notifyError: boolean) => {
 		if (issue.comments === 0 || issue.timeline.length >= issue.comments) return false
-		const detailKey = `${issueDetailKey(issue)}:comments`
+		const detailKey = issueCommentsKey(issue)
+		const loadState = registry.get(issueCommentsLoadedAtom)[detailKey]
+		if (loadState === "loading" || loadState === "ready" || loadState === "error") return false
 		const existing = detailHydrationRef.current.get(detailKey)
 		if (existing) {
 			if (notifyError) existing.notifyError = true
@@ -1468,13 +1517,25 @@ export const App = () => {
 		}
 		const entry: DetailHydration = { token: Symbol(detailKey), notifyError }
 		detailHydrationRef.current.set(detailKey, entry)
+		setIssueCommentsLoaded((current) => ({ ...current, [detailKey]: "loading" }))
 		const generation = refreshGenerationRef.current
 		void listIssueComments({ repository: issue.repository, number: issue.number }).then((comments) => {
 			if (generation !== refreshGenerationRef.current || detailHydrationRef.current.get(detailKey) !== entry) return
+			setIssueCommentsLoaded((current) => ({ ...current, [detailKey]: "ready" }))
 			updateIssue(issue.url, (current) => ({ ...current, timeline: comments, comments: Math.max(current.comments, comments.length) }))
 		}).catch((error) => {
-			if (entry.notifyError && generation === refreshGenerationRef.current && detailHydrationRef.current.get(detailKey) === entry) flashNotice(errorMessage(error))
+			if (generation !== refreshGenerationRef.current || detailHydrationRef.current.get(detailKey) !== entry) return
+			setIssueCommentsLoaded((current) => ({ ...current, [detailKey]: "error" }))
+			if (entry.notifyError) flashNotice(errorMessage(error))
 		}).finally(() => {
+			if (generation !== refreshGenerationRef.current) {
+				setIssueCommentsLoaded((current) => {
+					if (current[detailKey] !== "loading") return current
+					const next = { ...current }
+					delete next[detailKey]
+					return next
+				})
+			}
 			if (detailHydrationRef.current.get(detailKey) === entry) detailHydrationRef.current.delete(detailKey)
 		})
 		return true
@@ -1541,7 +1602,7 @@ export const App = () => {
 		if (!refreshCompletionMessage || refreshStartedAt === null) return
 		const fetchedAt = activeSurface === "issues" ? issueLoad?.fetchedAt?.getTime() : activeSurface === "pullRequests" ? pullRequestLoad?.fetchedAt?.getTime() : auxiliaryLoad?.fetchedAt?.getTime()
 		const isHydratingDetails = activeSurface === "issues"
-			? issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssue.timeline.length < selectedIssue.comments)
+			? issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssueCommentsLoading)
 			: activeSurface === "pullRequests" && pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
 		if (activeStatus === "ready" && fetchedAt !== undefined && fetchedAt !== refreshStartedAt && !isHydratingDetails) {
 			flashNotice(`✓ ${refreshCompletionMessage}`)
@@ -1552,15 +1613,18 @@ export const App = () => {
 			setRefreshCompletionMessage(null)
 			setRefreshStartedAt(null)
 		}
-	}, [refreshCompletionMessage, refreshStartedAt, activeStatus, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, auxiliaryLoad?.fetchedAt, pullRequests, issues, auxiliaryItems])
+	}, [refreshCompletionMessage, refreshStartedAt, activeStatus, activeSurface, pullRequestLoad?.fetchedAt, issueLoad?.fetchedAt, auxiliaryLoad?.fetchedAt, pullRequests, issues, auxiliaryItems, selectedIssueCommentsLoading])
 
 	useEffect(() => {
 		const handleFocus = () => {
 			terminalFocusedRef.current = true
 			setTerminalFocused(true)
-			if (terminalWasBlurredRef.current) {
-				if (activeSurface === "issues") maybeRefreshIssuesRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
-				else if (activeSurface === "pullRequests") maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
+			const wasBlurred = terminalWasBlurredRef.current
+			terminalWasBlurredRef.current = false
+			if (wasBlurred) {
+				const focusedSurface = activeSurfaceRef.current
+				if (focusedSurface === "issues") maybeRefreshIssuesRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
+				else if (focusedSurface === "pullRequests") maybeRefreshPullRequestsRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
 				else maybeRefreshAuxiliaryRef.current(FOCUS_RETURN_REFRESH_MIN_MS)
 			}
 		}
@@ -1576,7 +1640,7 @@ export const App = () => {
 			renderer.off("focus", handleFocus)
 			renderer.off("blur", handleBlur)
 		}
-	}, [renderer, activeSurface])
+	}, [renderer])
 
 	useEffect(() => {
 		if (!terminalFocused) return
@@ -1694,7 +1758,7 @@ export const App = () => {
 		diffCommentLineColorsRef.current = { contextKey: diffLineColorContextKey, entries: nextEntries }
 	}, [diffCommentMode, selectedDiffCommentAnchor?.renderLine, selectedDiffCommentAnchor?.localRenderLine, selectedDiffCommentAnchor?.side, selectedDiffCommentAnchor?.fileIndex, diffLineColorContextKey, effectiveDiffRenderView, diffCommentAnchors, diffCommentThreads])
 	const isHydratingPullRequestDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
-	const isHydratingIssueDetails = issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssue.timeline.length < selectedIssue.comments)
+	const isHydratingIssueDetails = issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssueCommentsLoading)
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
 	const isRefreshingIssues = issueResult.waiting && issueLoad !== null
 	const isRefreshingAuxiliary = auxiliaryResult.waiting && auxiliaryLoad !== null
@@ -1703,7 +1767,7 @@ export const App = () => {
 		: activeSurface === "pullRequests"
 			? pullRequestResult.waiting || isHydratingPullRequestDetails
 			: auxiliaryResult.waiting)
-		|| labelModal.loading || closeModal.running || mergeModal.loading || mergeModal.running || selectedDiffState?._tag === "Loading"
+		|| labelModal.loading || closeModal.running || confirmActionModal.running || mergeModal.loading || mergeModal.running || selectedDiffState?._tag === "Loading"
 	const loadingIndicator = LOADING_FRAMES[loadingFrame % LOADING_FRAMES.length]!
 
 	useEffect(() => {
@@ -1723,7 +1787,7 @@ export const App = () => {
 		if (issueStatus !== "ready" || !selectedIssue) return
 		hydrateIssueDetails(selectedIssue, true)
 		hydrateIssueComments(selectedIssue, true)
-	}, [issueStatus, selectedIssue?.url, selectedIssue?.detailLoaded, selectedIssue?.comments, selectedIssue?.timeline.length, selectedIssue?.repository, selectedIssue?.number])
+	}, [issueStatus, selectedIssue?.url, selectedIssue?.detailLoaded, selectedIssue?.comments, selectedIssue?.timeline.length, selectedIssue?.repository, selectedIssue?.number, selectedIssueCommentsState])
 
 	useEffect(() => {
 		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
@@ -2182,13 +2246,29 @@ export const App = () => {
 
 	const manageSelectedAuxiliary = () => {
 		if (!selectedAuxiliaryItem?.action) return
-		const item = selectedAuxiliaryItem
-		const previousLoad = currentAuxiliaryCacheKey ? registry.get(auxiliaryLoadCacheAtom)[currentAuxiliaryCacheKey] ?? null : null
-		removeAuxiliaryItem(item.id)
-		const restore = () => {
-			if (!currentAuxiliaryCacheKey || !previousLoad) return
-			setAuxiliaryLoadCache((current) => ({ ...current, [currentAuxiliaryCacheKey]: previousLoad }))
-		}
+		const spec = auxiliaryActionSpec(selectedAuxiliaryItem)
+		if (!spec) return
+		setConfirmActionModal({
+			itemId: selectedAuxiliaryItem.id,
+			repository: selectedAuxiliaryItem.repository,
+			title: selectedAuxiliaryItem.title,
+			action: selectedAuxiliaryItem.action,
+			actionLabel: spec.actionLabel,
+			description: spec.description,
+			confirmLabel: spec.confirmLabel,
+			running: false,
+			error: null,
+		})
+	}
+
+	const confirmAuxiliaryAction = () => {
+		if (!confirmActionModal.itemId || !confirmActionModal.action || confirmActionModal.running) return
+		const item = auxiliaryItems.find((entry) => entry.id === confirmActionModal.itemId)
+		if (!item || item.action !== confirmActionModal.action) return
+		const spec = auxiliaryActionSpec(item)
+		if (!spec) return
+		const cacheKey = currentAuxiliaryCacheKey
+		const previousLoad = cacheKey ? registry.get(auxiliaryLoadCacheAtom)[cacheKey] ?? null : null
 		const run = item.action === "mark-notification-read"
 			? markNotificationRead(item.id)
 			: item.repository && item.action === "unstar-repository"
@@ -2197,15 +2277,21 @@ export const App = () => {
 					? unwatchRepository(item.repository)
 					: null
 		if (!run) return
-		const success = item.action === "mark-notification-read"
-			? "Marked notification read"
-			: item.action === "unstar-repository"
-				? `Unstarred ${item.repository}`
-				: `Unwatched ${item.repository}`
+
+		setConfirmActionModal((current) => ({ ...current, running: true, error: null }))
+		removeAuxiliaryItem(item.id)
+		const restore = () => {
+			if (!cacheKey || !previousLoad) return
+			setAuxiliaryLoadCache((current) => ({ ...current, [cacheKey]: previousLoad }))
+		}
 		void run
-			.then(() => flashNotice(success))
+			.then(() => {
+				closeActiveModal()
+				flashNotice(spec.success)
+			})
 			.catch((error) => {
 				restore()
+				setConfirmActionModal((current) => ({ ...current, running: false, error: errorMessage(error) }))
 				flashNotice(errorMessage(error))
 			})
 	}
@@ -2742,6 +2828,7 @@ export const App = () => {
 		&& !commentModalActive
 		&& !commentThreadModalActive
 		&& !closeModalActive
+		&& !confirmActionModalActive
 		&& !mergeModalActive
 		&& !themeModalActive
 		&& !diffFullView
@@ -2749,8 +2836,17 @@ export const App = () => {
 		&& !filterMode
 	const runCommandByIdRef = useRef(runCommandById)
 	runCommandByIdRef.current = runCommandById
-	const activeSurfaceRef = useRef(activeSurface)
-	activeSurfaceRef.current = activeSurface
+	const runSurfaceShortcut = (key: { readonly name: string; readonly shift?: boolean; readonly ctrl?: boolean; readonly meta?: boolean; readonly option?: boolean }) => {
+		if (key.ctrl || key.meta || key.option) return false
+		if (key.name === "i") return runCommandById("surface.issues")
+		if (key.name === "p") return runCommandById("surface.pull-requests")
+		if (key.name === "n") return runCommandById("surface.notifications")
+		if (key.name === "D" || key.name === "d" && key.shift) return runCommandById("surface.discussions")
+		if (key.name === "f") return runCommandById("surface.stars")
+		if (key.name === "H" || key.name === "h" && key.shift) return runCommandById("surface.sharedRepos")
+		if (key.name === "w") return runCommandById("surface.watchedRepos")
+		return false
+	}
 	useBindings(() => ({
 		enabled: () => globalKeymapActiveRef.current,
 		bindings: [
@@ -2761,6 +2857,8 @@ export const App = () => {
 			{ key: "p", cmd: () => runCommandByIdRef.current("surface.pull-requests") },
 			{ key: "n", cmd: () => runCommandByIdRef.current("surface.notifications") },
 			{ key: "shift+d", cmd: () => runCommandByIdRef.current("surface.discussions") },
+			{ key: "f", cmd: () => runCommandByIdRef.current("surface.stars") },
+			{ key: "shift+h", cmd: () => runCommandByIdRef.current("surface.sharedRepos") },
 			{ key: "w", cmd: () => runCommandByIdRef.current("surface.watchedRepos") },
 			{ key: "c", cmd: () => {
 				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
@@ -2803,6 +2901,19 @@ export const App = () => {
 		bindings: [
 			{ key: "escape", cmd: () => closeActiveModalRef.current() },
 			{ key: "return", cmd: () => confirmCloseTargetRef.current() },
+		],
+	}), [])
+
+	// ConfirmActionModal: auxiliary management actions require an explicit enter.
+	const confirmActionModalActiveRef = useRef(false)
+	confirmActionModalActiveRef.current = confirmActionModalActive
+	const confirmAuxiliaryActionRef = useRef(confirmAuxiliaryAction)
+	confirmAuxiliaryActionRef.current = confirmAuxiliaryAction
+	useBindings(() => ({
+		enabled: () => confirmActionModalActiveRef.current,
+		bindings: [
+			{ key: "escape", cmd: () => closeActiveModalRef.current() },
+			{ key: "return", cmd: () => confirmAuxiliaryActionRef.current() },
 		],
 	}), [])
 
@@ -3219,6 +3330,7 @@ export const App = () => {
 				runCommandById("detail.close")
 				return
 			}
+			if (runSurfaceShortcut(key)) return
 			if (key.name === "tab") {
 				switchQueueMode(key.shift ? -1 : 1)
 				return
@@ -3521,6 +3633,11 @@ export const App = () => {
 	const closeModalHeight = closeLayout.height
 	const closeModalLeft = closeLayout.left
 	const closeModalTop = closeLayout.top
+	const confirmActionLayout = sizedModal(46, 72, 12, 12)
+	const confirmActionModalWidth = confirmActionLayout.width
+	const confirmActionModalHeight = confirmActionLayout.height
+	const confirmActionModalLeft = confirmActionLayout.left
+	const confirmActionModalTop = confirmActionLayout.top
 	const commentLayout = sizedModal(46, 76, 8, 16)
 	const commentModalWidth = commentLayout.width
 	const commentModalHeight = commentLayout.height
@@ -3796,8 +3913,9 @@ export const App = () => {
 						canReopenSelection={activeSurface === "issues" && selectedIssue?.state === "closed"}
 						canCommentSelection={activeSurface === "issues" && selectedIssue?.state === "open"}
 						canManageSelection={Boolean(selectedAuxiliaryItem?.action)}
+						manageLabel={auxiliaryActionSpec(selectedAuxiliaryItem)?.footerLabel ?? null}
 						hasError={activeStatus === "error"}
-						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : activeSurface === "pullRequests" ? isRefreshingPullRequests || isHydratingPullRequestDetails : isRefreshingAuxiliary) || closeModal.running || mergeModal.running}
+						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : activeSurface === "pullRequests" ? isRefreshingPullRequests || isHydratingPullRequestDetails : isRefreshingAuxiliary) || closeModal.running || confirmActionModal.running || mergeModal.running}
 						loadingIndicator={loadingIndicator}
 						retryProgress={retryProgress}
 					/>
@@ -3821,6 +3939,16 @@ export const App = () => {
 					modalHeight={closeModalHeight}
 					offsetLeft={closeModalLeft}
 					offsetTop={closeModalTop}
+					loadingIndicator={loadingIndicator}
+				/>
+			) : null}
+			{confirmActionModalActive ? (
+				<ConfirmActionModal
+					state={confirmActionModal}
+					modalWidth={confirmActionModalWidth}
+					modalHeight={confirmActionModalHeight}
+					offsetLeft={confirmActionModalLeft}
+					offsetTop={confirmActionModalTop}
 					loadingIndicator={loadingIndicator}
 				/>
 			) : null}

@@ -1,6 +1,6 @@
 import { Data } from "effect"
 import { formatShortDate, formatTimestamp } from "../date.js"
-import type { PullRequestLabel, PullRequestMergeInfo, PullRequestReviewComment } from "../domain.js"
+import type { AuxiliaryItemAction, PullRequestLabel, PullRequestMergeInfo, PullRequestReviewComment } from "../domain.js"
 import { availableMergeActions } from "../mergeActions.js"
 import { clampCursor, commentEditorLines, cursorLineIndexForLines } from "./commentEditor.js"
 import { colors, filterThemeDefinitions, themeDefinitions, type ThemeId } from "./colors.js"
@@ -32,6 +32,18 @@ export interface CloseModalState {
 	readonly url: string | null
 	readonly kind: "pull request" | "issue"
 	readonly action: "close" | "reopen"
+	readonly running: boolean
+	readonly error: string | null
+}
+
+export interface ConfirmActionModalState {
+	readonly itemId: string | null
+	readonly repository: string | null
+	readonly title: string
+	readonly action: AuxiliaryItemAction | null
+	readonly actionLabel: string
+	readonly description: string
+	readonly confirmLabel: string
 	readonly running: boolean
 	readonly error: string | null
 }
@@ -97,6 +109,18 @@ export const initialCloseModalState: CloseModalState = {
 	error: null,
 }
 
+export const initialConfirmActionModalState: ConfirmActionModalState = {
+	itemId: null,
+	repository: null,
+	title: "",
+	action: null,
+	actionLabel: "Confirm action",
+	description: "Confirm the selected action.",
+	confirmLabel: "confirm",
+	running: false,
+	error: null,
+}
+
 export const initialCommentModalState: CommentModalState = {
 	body: "",
 	cursor: 0,
@@ -127,6 +151,7 @@ export type Modal = Data.TaggedEnum<{
 	None: {}
 	Label: LabelModalState
 	Close: CloseModalState
+	ConfirmAction: ConfirmActionModalState
 	Merge: MergeModalState
 	Comment: CommentModalState
 	CommentThread: CommentThreadModalState
@@ -144,6 +169,7 @@ export type ModalState<Tag extends Exclude<ModalTag, "None">> = Omit<Extract<Mod
 export const modalInitialStates = {
 	Label: initialLabelModalState,
 	Close: initialCloseModalState,
+	ConfirmAction: initialConfirmActionModalState,
 	Merge: initialMergeModalState,
 	Comment: initialCommentModalState,
 	CommentThread: initialCommentThreadModalState,
@@ -412,6 +438,57 @@ export const CloseModal = ({
 					<Filler rows={topRows} prefix="top" />
 					<PlainLine text={titleLines[0]!} fg={colors.muted} />
 					<PlainLine text={titleLines[1]!} fg={colors.text} bold />
+					<Filler rows={bottomRows} prefix="bottom" />
+				</>
+			)}
+		</StandardModal>
+	)
+}
+
+export const ConfirmActionModal = ({
+	state,
+	modalWidth,
+	modalHeight,
+	offsetLeft,
+	offsetTop,
+	loadingIndicator,
+}: {
+	state: ConfirmActionModalState
+	modalWidth: number
+	modalHeight: number
+	offsetLeft: number
+	offsetTop: number
+	loadingIndicator: string
+}) => {
+	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
+	const isDestructive = state.action === "unstar-repository" || state.action === "unwatch-repository"
+	const rightText = state.running ? `${loadingIndicator} ${state.confirmLabel}` : "confirm"
+	const repo = state.repository ? shortRepoName(state.repository) : ""
+	const titleLines = [repo, state.title].filter((line) => line.length > 0).map((line) => fitCell(line, contentWidth))
+	const topRows = Math.max(0, Math.floor((bodyHeight - titleLines.length - 2) / 2))
+	const bottomRows = Math.max(0, bodyHeight - topRows - titleLines.length - 2)
+
+	return (
+		<StandardModal
+			left={offsetLeft}
+			top={offsetTop}
+			width={modalWidth}
+			height={modalHeight}
+			title={state.actionLabel}
+			titleFg={isDestructive ? colors.error : colors.accent}
+			headerRight={{ text: rightText, pending: state.running }}
+			subtitle={<PlainLine text={fitCell(state.description, contentWidth)} fg={colors.muted} />}
+			bodyPadding={1}
+			footer={<HintRow items={[{ key: "enter", label: state.confirmLabel }, { key: "esc", label: "cancel" }]} />}
+		>
+			{state.error ? (
+				<PlainLine text={fitCell(state.error, contentWidth)} fg={colors.error} />
+			) : (
+				<>
+					<Filler rows={topRows} prefix="top" />
+					{titleLines.map((line, index) => (
+						<PlainLine key={index} text={line} fg={index === 0 && repo ? colors.muted : colors.text} bold={index === titleLines.length - 1} />
+					))}
 					<Filler rows={bottomRows} prefix="bottom" />
 				</>
 			)}

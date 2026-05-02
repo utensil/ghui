@@ -172,8 +172,8 @@ export const buildAppCommands = ({
 		const shortcuts = {
 			notifications: "n",
 			discussions: "D",
-			stars: undefined,
-			sharedRepos: undefined,
+			stars: "f",
+			sharedRepos: "H",
 			watchedRepos: "w",
 		} satisfies Record<AuxiliarySurface, string | undefined>
 		return shortcuts[surface]
@@ -549,12 +549,12 @@ export const buildAppCommands = ({
 		defineCommand({
 			id: "aux.manage",
 			title: selectedAuxiliaryItem?.action === "mark-notification-read"
-				? "Mark notification read"
+				? "Confirm mark notification read"
 				: selectedAuxiliaryItem?.action === "unstar-repository"
-					? "Unstar repository"
+					? "Confirm unstar repository"
 					: selectedAuxiliaryItem?.action === "unwatch-repository"
-						? "Unwatch repository"
-						: "Manage selected item",
+						? "Confirm unwatch repository"
+						: "Confirm selected item action",
 			scope: "GitHub",
 			subtitle: selectedAuxiliaryLabel,
 			shortcut: "x",
