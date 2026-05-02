@@ -17,6 +17,7 @@ export type AuxiliaryListRow =
 	| { readonly _tag: "item"; readonly item: AuxiliaryItem }
 
 const surfaceTitle = (surface: AuxiliarySurface) => surfaceShortLabels[surface].toUpperCase()
+const ITEM_INDENT = 4
 
 const MatchedCell = ({ text, width, query, align = "left" }: { text: string; width: number; query: string; align?: "left" | "right" }) => {
 	const fitted = fitCell(text, width, align)
@@ -125,17 +126,19 @@ const AuxiliaryRow = ({
 	filterText: string
 	onSelect: () => void
 }) => {
+	const rowContentWidth = Math.max(8, contentWidth - ITEM_INDENT)
 	const updatedText = item.updatedAt ? formatRelativeDate(item.updatedAt) : ""
 	const updatedWidth = updatedText.length > 0 ? Math.min(14, Math.max(5, updatedText.length + 1)) : 0
 	const typeText = item.state ?? item.itemType
 	const typeWidth = Math.min(16, Math.max(0, typeText.length + 1))
 	const fixedWidth = 2 + typeWidth + updatedWidth
-	const titleWidth = Math.max(8, contentWidth - fixedWidth)
+	const titleWidth = Math.max(8, rowContentWidth - fixedWidth)
 	const rowFg = selected ? colors.selectedText : colors.text
 
 	return (
 		<box width={contentWidth} height={1} onMouseDown={onSelect}>
 			<TextLine width={contentWidth} fg={rowFg} bg={selected ? colors.selectedBg : undefined}>
+				<span>{" ".repeat(ITEM_INDENT)}</span>
 				<span fg={indicatorColor(item)}>{itemIndicator(item)}</span>
 				<span> </span>
 				<span><MatchedCell text={item.title} width={titleWidth} query={filterText} /></span>

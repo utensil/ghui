@@ -1885,7 +1885,7 @@ export const App = () => {
 		setDiffScrollTop(0)
 		setDiffCommentAnchorIndex(0)
 		detailPreviewScrollRef.current?.scrollTo({ x: 0, y: 0 })
-	}, [selectedIndex])
+	}, [activeSurface, selectedPullRequest?.url, selectedIssue?.url, selectedAuxiliaryItem?.id])
 
 	useEffect(() => {
 		setDiffCommentAnchorIndex((current) => {
@@ -3977,8 +3977,8 @@ export const App = () => {
 							</>
 						) : activeSurface === "issues" && selectedIssue ? (
 							<>
-								<IssueDetailHeader issue={selectedIssue} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
-								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideIssueDetailBodyScrollable }}>
+								<IssueDetailHeader key={`issue-header-${selectedIssue.url}`} issue={selectedIssue} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
+								<scrollbox key={`issue-body-${selectedIssue.url}`} ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideIssueDetailBodyScrollable }}>
 									<IssueDetailBody issue={selectedIssue} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={ISSUE_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} />
 								</scrollbox>
 							</>
@@ -3986,8 +3986,8 @@ export const App = () => {
 							<DetailPlaceholder content={detailPlaceholderContent} paneWidth={rightPaneWidth} />
 						) : isAuxiliarySurface(activeSurface) && selectedAuxiliaryItem ? (
 							<>
-								<AuxiliaryDetailHeader item={selectedAuxiliaryItem} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
-								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideAuxiliaryDetailBodyScrollable }}>
+								<AuxiliaryDetailHeader key={`aux-header-${selectedAuxiliaryItem.id}`} item={selectedAuxiliaryItem} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} />
+								<scrollbox key={`aux-body-${selectedAuxiliaryItem.id}`} ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideAuxiliaryDetailBodyScrollable }}>
 									<AuxiliaryDetailBody item={selectedAuxiliaryItem} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={AUXILIARY_BODY_SCROLL_LIMIT} themeId={themeId} />
 								</scrollbox>
 							</>
@@ -4000,8 +4000,8 @@ export const App = () => {
 							</>
 						) : selectedPullRequest ? (
 							<>
-								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
-								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>
+								<DetailHeader key={`pull-header-${selectedPullRequest.url}`} pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
+								<scrollbox key={`pull-body-${selectedPullRequest.url}`} ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>
 									<DetailBody pullRequest={selectedPullRequest} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} />
 								</scrollbox>
 							</>
@@ -4087,11 +4087,12 @@ export const App = () => {
 			) : (
 				<Divider width={contentWidth} />
 			)}
-			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
+			<box width={contentWidth} height={1} paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
 				{footerNotice ? (
 					<PlainLine text={footerNotice} fg={colors.count} />
 				) : (
 					<FooterHints
+						width={headerFooterWidth}
 						surface={activeSurface}
 						filterEditing={filterMode}
 						showFilterClear={filterMode || filterQuery.length > 0}

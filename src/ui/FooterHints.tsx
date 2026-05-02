@@ -12,6 +12,7 @@ export const RetryProgress = Data.taggedEnum<RetryProgress>()
 export const initialRetryProgress: RetryProgress = RetryProgress.Idle()
 
 interface HintsContext {
+	readonly width?: number
 	readonly surface?: AppSurface
 	readonly filterEditing: boolean
 	readonly showFilterClear: boolean
@@ -115,4 +116,4 @@ const footerHints = (ctx: HintsContext): readonly HintItem[] => {
 	return defaultHints(ctx)
 }
 
-export const FooterHints = (props: HintsContext) => <HintRow items={footerHints(props)} />
+export const FooterHints = (props: HintsContext) => <HintRow items={footerHints(props)} {...(props.width === undefined ? {} : { width: props.width })} />

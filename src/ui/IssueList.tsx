@@ -18,6 +18,7 @@ export type IssueListRow =
 	| { readonly _tag: "load-more"; readonly text: string }
 
 const GROUP_ICON = "◆"
+const ITEM_INDENT = 4
 
 const groupNumberWidth = (issues: readonly IssueItem[]) => {
 	if (issues.length === 0) return 4
@@ -127,19 +128,21 @@ const IssueRow = ({
 	onSelect: () => void
 }) => {
 	const display = issueRowDisplay(issue, selected)
+	const rowContentWidth = Math.max(8, contentWidth - ITEM_INDENT)
 	const indicatorWidth = 1
 	const metaWidth = Math.min(14, Math.max(0, display.metaText.length))
 	const updatedText = formatRelativeDate(issue.updatedAt)
 	const updatedWidth = Math.min(14, Math.max(5, updatedText.length + 1))
 	const fixedWidth = indicatorWidth + 1 + numWidth + 1 + metaWidth + updatedWidth
-	const titleWidth = Math.max(8, contentWidth - fixedWidth)
+	const titleWidth = Math.max(8, rowContentWidth - fixedWidth)
 	const labelWidth = Math.max(0, Math.min(20, titleWidth - issue.title.length - 2))
 	const labels = labelSummary(issue, labelWidth)
-	const fillerWidth = Math.max(0, contentWidth - fixedWidth - titleWidth)
+	const fillerWidth = Math.max(0, rowContentWidth - fixedWidth - titleWidth)
 
 	return (
 		<box width={contentWidth} height={1} onMouseDown={onSelect}>
 			<TextLine width={contentWidth} fg={display.rowFg} bg={selected ? colors.selectedBg : undefined}>
+				<span>{" ".repeat(ITEM_INDENT)}</span>
 				<span fg={display.indicatorFg}>{fitCell(issueStateIcon(issue), indicatorWidth)}</span>
 				<span> </span>
 				<span fg={display.numberFg}><MatchedCell text={`#${issue.number}`} width={numWidth} query={filterText} align="right" /></span>

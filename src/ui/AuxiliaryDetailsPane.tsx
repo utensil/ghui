@@ -137,7 +137,7 @@ export const AuxiliaryDetailBody = ({
 }) => {
 	const rows = useMemo(
 		() => itemContentRows(item, contentWidth, bodyLineLimit),
-		[item.body, item.meta, contentWidth, bodyLineLimit, themeId],
+		[item.id, item.body, item.meta, contentWidth, bodyLineLimit, themeId],
 	)
 
 	return (

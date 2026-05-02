@@ -382,7 +382,7 @@ export const DetailBody = ({
 }) => {
 	const previewLines = useMemo(
 		() => bodyPreview(pullRequest.body, contentWidth, bodyLineLimit),
-		[pullRequest.body, contentWidth, bodyLineLimit, themeId],
+		[pullRequest.url, pullRequest.body, contentWidth, bodyLineLimit, themeId],
 	)
 
 	if (!pullRequest.detailLoaded) {

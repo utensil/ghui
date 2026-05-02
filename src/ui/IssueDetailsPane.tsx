@@ -185,7 +185,7 @@ export const IssueDetailBody = ({
 }) => {
 	const rows = useMemo(
 		() => issueContentRows(issue, contentWidth, bodyLineLimit),
-		[issue.body, issue.timeline, contentWidth, bodyLineLimit, themeId],
+		[issue.url, issue.body, issue.timeline, contentWidth, bodyLineLimit, themeId],
 	)
 
 	if (!issue.detailLoaded) {

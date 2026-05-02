@@ -98,10 +98,10 @@ export type HintItem = {
 	readonly keyFg?: string
 }
 
-export const HintRow = ({ items }: { items: readonly HintItem[] }) => {
+export const HintRow = ({ items, width }: { items: readonly HintItem[]; width?: number }) => {
 	const visible = items.filter((item) => item.when !== false)
 	return (
-		<TextLine>
+		<TextLine {...(width === undefined ? {} : { width })}>
 			{visible.flatMap((item, index) => [
 				<span key={`k${index}`} fg={item.keyFg ?? colors.count}>{item.key}</span>,
 				<span key={`l${index}`} fg={colors.muted}>{` ${item.label}${index < visible.length - 1 ? "  " : ""}`}</span>,

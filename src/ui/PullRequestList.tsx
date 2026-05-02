@@ -17,6 +17,7 @@ export type PullRequestListRow =
 	| { readonly _tag: "load-more"; readonly text: string }
 
 const GROUP_ICON = "◆"
+const ITEM_INDENT = 4
 
 const getRowLayout = (contentWidth: number, numberWidth: number, ageWidth: number) => {
 	const reviewWidth = 1
@@ -136,14 +137,16 @@ const PullRequestRow = ({
 	onSelect: () => void
 }) => {
 	const ageText = `${daysOpen(pullRequest.createdAt)}d`
-	const { reviewWidth, checkWidth, ageWidth, numberWidth, titleWidth } = getRowLayout(contentWidth, numWidth, ageColWidth)
+	const rowContentWidth = Math.max(8, contentWidth - ITEM_INDENT)
+	const { reviewWidth, checkWidth, ageWidth, numberWidth, titleWidth } = getRowLayout(rowContentWidth, numWidth, ageColWidth)
 	const rowWidth = reviewWidth + 1 + numberWidth + 1 + titleWidth + checkWidth + ageWidth
-	const fillerWidth = Math.max(0, contentWidth - rowWidth)
+	const fillerWidth = Math.max(0, rowContentWidth - rowWidth)
 	const display = pullRequestRowDisplay(pullRequest, selected)
 
 	return (
 		<box width={contentWidth} height={1} onMouseDown={onSelect}>
 			<TextLine width={contentWidth} fg={display.rowFg} bg={selected ? colors.selectedBg : undefined}>
+				<span>{" ".repeat(ITEM_INDENT)}</span>
 				<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
 				<span> </span>
 				<span fg={display.numberFg}><MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" /></span>
