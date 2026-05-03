@@ -1,7 +1,8 @@
 import type { DiffRenderable, PasteEvent, ScrollBoxRenderable } from "@opentui/core"
 import { RegistryContext, useAtom, useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react"
-import { useAppCommandRegistry } from "./keyboard/useAppCommandRegistry.js"
-import { scrollBindings, useScopedBindings } from "./keyboard/useScopedBindings.js"
+import { useKeymap } from "@ghui/keymap/react"
+import { appKeymap, type AppCtx } from "./keymap/all.js"
+import { useOpenTuiSubscribe } from "./keyboard/opentuiAdapter.js"
 import { useKeyboard, useRenderer, useTerminalDimensions } from "@opentui/react"
 import { Cause, Effect, Layer, Schedule } from "effect"
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
@@ -12,7 +13,7 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, commandEnabled, defineCommand, filterCommands, sortCommandsByScope } from "./commands.js"
 import { config } from "./config.js"
-import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
+import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestConversationItem, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
 import { activeIssueViews, initialIssueView, issueViewCacheKey, issueViewEquals, issueViewLabel, issueViewMode, issueViewRepository, nextIssueView, type IssueView } from "./issueViews.js"
@@ -24,13 +25,13 @@ import { BrowserOpener } from "./services/BrowserOpener.js"
 import { Clipboard } from "./services/Clipboard.js"
 import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
-import { loadStoredThemeId, saveStoredThemeId } from "./themeStore.js"
+import { loadStoredDiffWhitespaceMode, loadStoredThemeId, saveStoredDiffWhitespaceMode, saveStoredThemeId } from "./themeStore.js"
 import { colors, filterThemeDefinitions, mixHex, setActiveTheme, themeDefinitions, type ThemeId } from "./ui/colors.js"
 import { AUXILIARY_BODY_SCROLL_LIMIT, AuxiliaryDetailBody, AuxiliaryDetailHeader, AuxiliaryDetailsPane, getAuxiliaryDetailHeaderHeight, getAuxiliaryDetailJunctionRows, getAuxiliaryDetailsPaneHeight, getScrollableAuxiliaryBodyHeight } from "./ui/AuxiliaryDetailsPane.js"
 import { auxiliaryListRowIndex, AuxiliaryList, buildAuxiliaryListRows } from "./ui/AuxiliaryList.js"
 import { backspace as editorBackspace, deleteForward as editorDeleteForward, deleteToLineEnd, deleteToLineStart, deleteWordBackward, deleteWordForward, insertText, moveLeft as editorMoveLeft, moveLineEnd, moveLineStart, moveRight as editorMoveRight, moveVertically, moveWordBackward, moveWordForward, type CommentEditorValue } from "./ui/commentEditor.js"
-import { buildStackedDiffFiles, diffCommentLocationKey, getStackedDiffCommentAnchors, nearestDiffCommentAnchorIndex, PullRequestDiffState, pullRequestDiffKey, safeDiffFileIndex, scrollTopForVisibleLine, splitPatchFiles, stackedDiffFileAtLine, type DiffCommentAnchor, type DiffView, type DiffWrapMode, type StackedDiffCommentAnchor } from "./ui/diff.js"
-import { DETAIL_BODY_SCROLL_LIMIT, DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailHeaderHeight, getDetailJunctionRows, getDetailsPaneHeight, getScrollableDetailBodyHeight, LoadingPane, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
+import { buildStackedDiffFiles, diffAnchorOnSide, diffCommentAnchorLabel, diffCommentLocationKey, getStackedDiffCommentAnchors, minimizeWhitespaceDiffFiles, nearestDiffCommentAnchorIndex, PullRequestDiffState, pullRequestDiffKey, safeDiffFileIndex, scrollTopForVisibleLine, splitPatchFiles, stackedDiffFileAtLine, verticalDiffAnchor, type DiffCommentAnchor, type DiffView, type DiffWhitespaceMode, type DiffWrapMode, type StackedDiffCommentAnchor } from "./ui/diff.js"
+import { DETAIL_BODY_SCROLL_LIMIT, DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailHeaderHeight, getDetailJunctionRows, getDetailsPaneHeight, getScrollableDetailBodyHeight, LoadingPane, type DetailConversationStatus, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
 import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
 import { ISSUE_BODY_SCROLL_LIMIT, IssueDetailBody, IssueDetailHeader, IssueDetailsPane, getIssueDetailHeaderHeight, getIssueDetailJunctionRows, getIssueDetailsPaneHeight, getScrollableIssueBodyHeight } from "./ui/IssueDetailsPane.js"
 import { buildIssueListRows, issueListRowIndex, IssueList } from "./ui/IssueList.js"
@@ -60,7 +61,7 @@ const githubRuntime = Atom.runtime(
 		Layer.provideMerge(Observability.layer),
 	),
 )
-const initialThemeId = await Effect.runPromise(loadStoredThemeId)
+const [initialThemeId, initialDiffWhitespaceMode] = await Promise.all([Effect.runPromise(loadStoredThemeId), Effect.runPromise(loadStoredDiffWhitespaceMode)])
 
 interface PullRequestLoad {
 	readonly view: PullRequestView
@@ -190,9 +191,9 @@ const auxiliaryCacheKey = (surface: AuxiliarySurface, repository: string | null)
 
 const retryProgressAtom = Atom.make<RetryProgress>(initialRetryProgress).pipe(Atom.keepAlive)
 const activeSurfaceAtom = Atom.make<AppSurface>("issues").pipe(Atom.keepAlive)
-const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView(config.repository)).pipe(Atom.keepAlive)
-const activeIssueViewAtom = Atom.make<IssueView>(initialIssueView(config.repository)).pipe(Atom.keepAlive)
-const discussionRepositoryAtom = Atom.make<string | null>(config.repository).pipe(Atom.keepAlive)
+const activeViewAtom = Atom.make<PullRequestView>(initialPullRequestView()).pipe(Atom.keepAlive)
+const activeIssueViewAtom = Atom.make<IssueView>(initialIssueView(null)).pipe(Atom.keepAlive)
+const discussionRepositoryAtom = Atom.make<string | null>(null).pipe(Atom.keepAlive)
 const notificationRepositoryAtom = Atom.make<string | null>(null).pipe(Atom.keepAlive)
 const queueLoadCacheAtom = Atom.make<Partial<Record<string, PullRequestLoad>>>({}).pipe(Atom.keepAlive)
 const issueLoadCacheAtom = Atom.make<Partial<Record<string, IssueLoad>>>({}).pipe(Atom.keepAlive)
@@ -360,10 +361,14 @@ const diffFileIndexAtom = Atom.make(0)
 const diffScrollTopAtom = Atom.make(0)
 const diffRenderViewAtom = Atom.make<DiffView>("split")
 const diffWrapModeAtom = Atom.make<DiffWrapMode>("none")
+const diffWhitespaceModeAtom = Atom.make<DiffWhitespaceMode>(initialDiffWhitespaceMode)
 const diffCommentModeAtom = Atom.make(false)
 const diffCommentAnchorIndexAtom = Atom.make(0)
+const diffPreferredSideAtom = Atom.make<DiffCommentSide | null>(null)
 const diffCommentThreadsAtom = Atom.make<Record<string, readonly PullRequestReviewComment[]>>({}).pipe(Atom.keepAlive)
 const diffCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
+const pullRequestConversationAtom = Atom.make<Record<string, readonly PullRequestConversationItem[]>>({}).pipe(Atom.keepAlive)
+const pullRequestConversationLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
 const issueCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready" | "error">>({}).pipe(Atom.keepAlive)
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
@@ -374,11 +379,7 @@ const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).
 const issueOverridesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
 const recentlyCompletedPullRequestsAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
 const recentlyCompletedIssuesAtom = Atom.make<Record<string, IssueItem>>({}).pipe(Atom.keepAlive)
-const usernameAtom = githubRuntime.atom(
-	config.author === "@me"
-		? GitHubService.use((github) => github.getAuthenticatedUser())
-		: Effect.succeed(config.author.replace(/^@/, "")),
-).pipe(Atom.keepAlive)
+const usernameAtom = githubRuntime.atom(GitHubService.use((github) => github.getAuthenticatedUser())).pipe(Atom.keepAlive)
 
 const pullRequestLoadAtom = Atom.make((get) => {
 	const view = get(activeViewAtom)
@@ -681,6 +682,9 @@ const pullRequestDiffAtom = Atom.family((key: string) => {
 })
 const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestComments(input.repository, input.number))
+)
+const listPullRequestConversationAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listPullRequestConversation(input.repository, input.number))
 )
 const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listIssueComments(input.repository, input.number))
@@ -986,10 +990,14 @@ export const App = () => {
 	const [diffScrollTop, setDiffScrollTop] = useAtom(diffScrollTopAtom)
 	const [diffRenderView, setDiffRenderView] = useAtom(diffRenderViewAtom)
 	const [diffWrapMode, setDiffWrapMode] = useAtom(diffWrapModeAtom)
+	const [diffWhitespaceMode, setDiffWhitespaceMode] = useAtom(diffWhitespaceModeAtom)
 	const [diffCommentMode, setDiffCommentMode] = useAtom(diffCommentModeAtom)
 	const [diffCommentAnchorIndex, setDiffCommentAnchorIndex] = useAtom(diffCommentAnchorIndexAtom)
+	const [diffPreferredSide, setDiffPreferredSide] = useAtom(diffPreferredSideAtom)
 	const [diffCommentThreads, setDiffCommentThreads] = useAtom(diffCommentThreadsAtom)
 	const setDiffCommentsLoaded = useAtomSet(diffCommentsLoadedAtom)
+	const setPullRequestConversation = useAtomSet(pullRequestConversationAtom)
+	const setPullRequestConversationLoaded = useAtomSet(pullRequestConversationLoadedAtom)
 	const setPullRequestDiffCache = useAtomSet(pullRequestDiffCacheAtom)
 	const [issueCommentsLoaded, setIssueCommentsLoaded] = useAtom(issueCommentsLoadedAtom)
 	const [activeModal, setActiveModal] = useAtom(activeModalAtom)
@@ -1059,6 +1067,7 @@ export const App = () => {
 	const removeIssueLabel = useAtomSet(removeIssueLabelAtom, { mode: "promise" })
 	const toggleDraftStatus = useAtomSet(toggleDraftAtom, { mode: "promise" })
 	const listPullRequestComments = useAtomSet(listPullRequestCommentsAtom, { mode: "promise" })
+	const listPullRequestConversation = useAtomSet(listPullRequestConversationAtom, { mode: "promise" })
 	const listIssueComments = useAtomSet(listIssueCommentsAtom, { mode: "promise" })
 	const getPullRequestMergeInfo = useAtomSet(getPullRequestMergeInfoAtom, { mode: "promise" })
 	const mergePullRequest = useAtomSet(mergePullRequestAtom, { mode: "promise" })
@@ -1260,7 +1269,10 @@ export const App = () => {
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
-	const readyDiffFiles = selectedDiffState?._tag === "Ready" ? selectedDiffState.files : []
+	const readyDiffFiles = useMemo(
+		() => (selectedDiffState?._tag === "Ready" ? (diffWhitespaceMode === "ignore" ? minimizeWhitespaceDiffFiles(selectedDiffState.files) : selectedDiffState.files) : []),
+		[selectedDiffState, diffWhitespaceMode],
+	)
 	const stackedDiffFiles = useMemo(() => buildStackedDiffFiles(readyDiffFiles, effectiveDiffRenderView, diffWrapMode, contentWidth), [readyDiffFiles, effectiveDiffRenderView, diffWrapMode, contentWidth])
 	const diffCommentAnchors = useMemo(
 		() => diffFullView ? getStackedDiffCommentAnchors(stackedDiffFiles, effectiveDiffRenderView, diffWrapMode, contentWidth) : [],
@@ -1269,11 +1281,12 @@ export const App = () => {
 	const selectedDiffCommentAnchor = diffCommentAnchors[Math.max(0, Math.min(diffCommentAnchorIndex, diffCommentAnchors.length - 1))] ?? null
 	const selectedDiffCommentThreadKey = selectedDiffKey && selectedDiffCommentAnchor ? `${selectedDiffKey}:${diffCommentLocationKey(selectedDiffCommentAnchor)}` : null
 	const selectedDiffCommentThread = selectedDiffCommentThreadKey ? diffCommentThreads[selectedDiffCommentThreadKey] ?? [] : []
+	const selectedDiffCommentLabel = selectedDiffCommentAnchor ? diffCommentAnchorLabel(selectedDiffCommentAnchor) : null
+	const pullRequestConversation = useAtomValue(pullRequestConversationAtom)
+	const pullRequestConversationLoaded = useAtomValue(pullRequestConversationLoadedAtom)
+	const selectedConversationItems = selectedDiffKey ? (pullRequestConversation[selectedDiffKey] ?? []) : []
+	const selectedConversationStatus: DetailConversationStatus = selectedDiffKey ? (pullRequestConversationLoaded[selectedDiffKey] ?? "idle") : "idle"
 	const diffLineColorContextKey = selectedDiffKey ? `${selectedDiffKey}:${effectiveDiffRenderView}:${diffWrapMode}` : null
-	const diffCommentRows = useMemo(
-		() => [...new Set(diffCommentAnchors.map((anchor) => anchor.renderLine))].sort((left, right) => left - right),
-		[diffCommentAnchors],
-	)
 	const groupStarts = useAtomValue(groupStartsAtom)
 	const issueGroupStarts = useAtomValue(issueGroupStartsAtom)
 	const auxiliaryGroupStarts = useAtomValue(auxiliaryGroupStartsAtom)
@@ -1747,6 +1760,29 @@ export const App = () => {
 		})
 		return true
 	}
+	const loadPullRequestConversation = (pullRequest: PullRequestItem, force = false) => {
+		const key = pullRequestDiffKey(pullRequest)
+		const previousLoadState = registry.get(pullRequestConversationLoadedAtom)[key]
+		if (!force && previousLoadState) return
+		const generation = refreshGenerationRef.current
+		setPullRequestConversationLoaded((current) => ({ ...current, [key]: "loading" }))
+		void listPullRequestConversation({ repository: pullRequest.repository, number: pullRequest.number })
+			.then((items) => {
+				if (generation !== refreshGenerationRef.current) return
+				setPullRequestConversation((current) => ({ ...current, [key]: items }))
+				setPullRequestConversationLoaded((current) => ({ ...current, [key]: "ready" }))
+			})
+			.catch((error) => {
+				if (generation !== refreshGenerationRef.current) return
+				setPullRequestConversationLoaded((current) => {
+					if (previousLoadState === "ready") return { ...current, [key]: previousLoadState }
+					const next = { ...current }
+					delete next[key]
+					return next
+				})
+				flashNotice(errorMessage(error))
+			})
+	}
 	const hydrateIssueDetails = (issue: IssueItem, notifyError: boolean) => {
 		if (issue.detailLoaded) return false
 		const detailKey = issueDetailKey(issue)
@@ -2060,6 +2096,11 @@ export const App = () => {
 	}, [pullRequestStatus, selectedPullRequest?.url, selectedPullRequest?.headRefOid, selectedPullRequest?.state, selectedPullRequest?.detailLoaded, selectedPullRequest?.repository, selectedPullRequest?.number])
 
 	useEffect(() => {
+		if (pullRequestStatus !== "ready" || !selectedPullRequest) return
+		loadPullRequestConversation(selectedPullRequest)
+	}, [pullRequestStatus, selectedPullRequest?.url, selectedPullRequest?.headRefOid, selectedPullRequest?.repository, selectedPullRequest?.number])
+
+	useEffect(() => {
 		if (issueStatus !== "ready" || !selectedIssue) return
 		hydrateIssueDetails(selectedIssue, true)
 		hydrateIssueComments(selectedIssue, true)
@@ -2104,7 +2145,16 @@ export const App = () => {
 		title: `${loadingIndicator} Loading issue details`,
 		hint: `${selectedIssue.repository} #${selectedIssue.number}`,
 	} : detailPlaceholderContent
-	const detailJunctions = isSelectedPullRequestDetailLoading ? [] : getDetailJunctionRows(selectedPullRequest, rightPaneWidth, true)
+	const detailJunctions = isSelectedPullRequestDetailLoading ? [] : getDetailJunctionRows({
+		pullRequest: selectedPullRequest,
+		paneWidth: rightPaneWidth,
+		showChecks: true,
+		contentWidth: rightContentWidth,
+		bodyScrollTop: 0,
+		bodyViewportHeight: Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true)),
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
+	})
 	const issueDetailJunctions = isSelectedIssueDetailLoading ? [] : getIssueDetailJunctionRows(selectedIssue, rightPaneWidth)
 	const auxiliaryDetailJunctions = getAuxiliaryDetailJunctionRows(selectedAuxiliaryItem, rightPaneWidth)
 
@@ -2227,15 +2277,6 @@ export const App = () => {
 		setDiffFileIndex((current) => current === nextIndex ? current : nextIndex)
 	}
 
-	const scrollDiffBy = (y: number) => {
-		diffScrollRef.current?.scrollBy({ x: 0, y })
-		syncDiffScrollState()
-	}
-
-	const scrollDiffTo = (y: number) => {
-		diffScrollRef.current?.scrollTo({ x: 0, y })
-		syncDiffScrollState()
-	}
 	const scrollDetailPreviewBy = (y: number) => detailPreviewScrollRef.current?.scrollBy({ x: 0, y })
 	const scrollDetailPreviewTo = (y: number) => detailPreviewScrollRef.current?.scrollTo({ x: 0, y })
 
@@ -2261,7 +2302,8 @@ export const App = () => {
 		const nextIndex = safeDiffFileIndex(readyDiffFiles, diffFileIndex + delta)
 		setDiffFileIndex(nextIndex)
 		if (diffCommentMode) {
-			const nextAnchor = diffCommentAnchors.find((anchor) => anchor.fileIndex === nextIndex && anchor.side === selectedDiffCommentAnchor?.side)
+			const targetSide = diffPreferredSide ?? selectedDiffCommentAnchor?.side
+			const nextAnchor = diffCommentAnchors.find((anchor) => anchor.fileIndex === nextIndex && anchor.side === targetSide)
 				?? diffCommentAnchors.find((anchor) => anchor.fileIndex === nextIndex)
 			if (nextAnchor) setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 		}
@@ -2275,21 +2317,30 @@ export const App = () => {
 		setDiffCommentMode(true)
 	}
 
-	const moveDiffCommentAnchor = (delta: number) => {
+	const moveDiffCommentAnchor = (delta: number, options: { readonly preserveViewportRow?: boolean } = {}) => {
 		if (diffCommentAnchors.length === 0) return
-		const currentAnchor = selectedDiffCommentAnchor ?? diffCommentAnchors[0]
-		const currentRowIndex = Math.max(0, currentAnchor ? diffCommentRows.indexOf(currentAnchor.renderLine) : 0)
-		const nextRow = diffCommentRows[Math.max(0, Math.min(diffCommentRows.length - 1, currentRowIndex + delta))]
-		if (nextRow === undefined) return
-		const nextAnchor = diffCommentAnchors.find((anchor) => anchor.renderLine === nextRow && anchor.side === currentAnchor?.side)
-			?? diffCommentAnchors.find((anchor) => anchor.renderLine === nextRow)
+		const currentAnchor = selectedDiffCommentAnchor ?? diffCommentAnchors[0] ?? null
+		const nextAnchor = verticalDiffAnchor(diffCommentAnchors, currentAnchor, delta, diffPreferredSide)
 		if (!nextAnchor) return
+		if (options.preserveViewportRow) {
+			const scroll = diffScrollRef.current
+			if (scroll && currentAnchor) {
+				const maxScreenOffset = Math.max(DIFF_STICKY_HEADER_LINES, scroll.viewport.height - 2)
+				const screenOffset = Math.max(DIFF_STICKY_HEADER_LINES, Math.min(maxScreenOffset, currentAnchor.renderLine - scroll.scrollTop))
+				const maxScrollTop = Math.max(0, scroll.scrollHeight - scroll.viewport.height)
+				const nextTop = Math.max(0, Math.min(maxScrollTop, nextAnchor.renderLine - screenOffset))
+				suppressNextDiffCommentScrollRef.current = true
+				scroll.scrollTo({ x: 0, y: nextTop })
+				syncDiffScrollState()
+			}
+		}
 		setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 	}
 
 	const selectDiffCommentSide = (side: DiffCommentSide) => {
+		setDiffPreferredSide(side)
 		if (!selectedDiffCommentAnchor) return
-		const nextAnchor = diffCommentAnchors.find((anchor) => anchor.renderLine === selectedDiffCommentAnchor.renderLine && anchor.side === side)
+		const nextAnchor = diffAnchorOnSide(diffCommentAnchors, selectedDiffCommentAnchor, side)
 		if (!nextAnchor) return
 		setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 	}
@@ -2299,6 +2350,7 @@ export const App = () => {
 		const nextAnchor = (side ? lineAnchors.find((anchor) => anchor.side === side) : undefined) ?? lineAnchors[0]
 		if (!nextAnchor) return
 		suppressNextDiffCommentScrollRef.current = true
+		setDiffPreferredSide(side ?? nextAnchor.side)
 		setDiffCommentAnchorIndex(diffCommentAnchors.indexOf(nextAnchor))
 		setDiffFileIndex(nextAnchor.fileIndex)
 		setDiffCommentMode(true)
@@ -2976,10 +3028,13 @@ export const App = () => {
 		diffReady: selectedDiffState?._tag === "Ready",
 		effectiveDiffRenderView,
 		diffWrapMode,
+		diffWhitespaceMode,
 		readyDiffFileCount: readyDiffFiles.length,
 		diffFileIndex,
-		diffCommentMode,
-		selectedDiffCommentAnchorLabel: selectedDiffCommentAnchor ? `${selectedDiffCommentAnchor.path}:${selectedDiffCommentAnchor.line}` : null,
+		diffRangeActive: diffCommentMode,
+		selectedDiffCommentAnchorLabel: selectedDiffCommentLabel,
+		selectedDiffCommentThreadCount: selectedDiffCommentThread.length,
+		hasDiffCommentThreads: Object.values(diffCommentThreads).some((threads) => threads.length > 0),
 		actions: {
 			openCommandPalette,
 			refreshPullRequests,
@@ -3027,12 +3082,24 @@ export const App = () => {
 			},
 			toggleDiffRenderView: () => setDiffRenderView((current) => current === "unified" ? "split" : "unified"),
 			toggleDiffWrapMode: () => setDiffWrapMode((current) => current === "none" ? "word" : "none"),
+			toggleDiffWhitespaceMode: () => {
+				const next = diffWhitespaceMode === "ignore" ? "show" : "ignore"
+				setDiffWhitespaceMode(next)
+				void Effect.runPromise(saveStoredDiffWhitespaceMode(next)).catch((error) => flashNotice(errorMessage(error)))
+			},
+			openChangedFilesModal: () => flashNotice("Changed files navigator is not yet wired for this fork view."),
 			jumpDiffFile,
+			openSelectedDiffComment: () => {
+				if (selectedDiffCommentThread.length > 0) openDiffCommentThreadModal()
+				else openDiffCommentModal()
+			},
 			toggleDiffCommentRange: () => {
 				if (diffCommentMode) setDiffCommentMode(false)
 				else enterDiffCommentMode()
 			},
+			moveDiffCommentThread: moveDiffCommentAnchor,
 			openDiffCommentModal,
+			openSubmitReviewModal: () => flashNotice("Submit review is not yet wired for this fork view."),
 			togglePullRequestDraftStatus: toggleSelectedPullRequestDraftStatus,
 			openLabelModal,
 			openMergeModal,
@@ -3066,7 +3133,6 @@ export const App = () => {
 	}
 	const runCommandByIdRef = useRef(runCommandById)
 	runCommandByIdRef.current = runCommandById
-	useAppCommandRegistry(appCommands, runCommandByIdRef)
 	const dynamicPaletteCommands: readonly AppCommand[] = (() => {
 		if (!commandPaletteActive) return []
 		const repository = parseRepositoryInput(commandPalette.query)
@@ -3090,236 +3156,28 @@ export const App = () => {
 	const selectedCommandIndex = clampCommandIndex(commandPalette.selectedIndex, commandPaletteCommands)
 	const selectedCommand = commandPaletteCommands[selectedCommandIndex] ?? null
 
-	const globalLayerActive = !commandPaletteActive
-		&& !openRepositoryModalActive
-		&& !labelModalActive
-		&& !commentModalActive
-		&& !commentThreadModalActive
-		&& !closeModalActive
-		&& !confirmActionModalActive
-		&& !mergeModalActive
-		&& !themeModalActive
-		&& !diffFullView
-		&& !detailFullView
-		&& !filterMode
-	useScopedBindings({
-		when: true,
-		bindings: {
-			"ctrl+p": "command.open",
-			"meta+k": "command.open",
-		},
-	})
-
-	useScopedBindings({
-		when: closeModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			return: confirmCloseTarget,
-		},
-	})
-
-	useScopedBindings({
-		when: confirmActionModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			return: confirmAuxiliaryAction,
-		},
-	})
-
 	const moveMergeSelection = (delta: -1 | 1) => setMergeModal((current) => {
 		const max = Math.max(0, availableMergeActions(mergeModal.info).length - 1)
 		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
-	})
-	useScopedBindings({
-		when: mergeModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			return: () => {
-				if (availableMergeActions(mergeModal.info).length > 0) confirmMergeAction()
-			},
-			up: () => moveMergeSelection(-1),
-			k: () => moveMergeSelection(-1),
-			down: () => moveMergeSelection(1),
-			j: () => moveMergeSelection(1),
-		},
 	})
 
 	const scrollCommentThread = (delta: number) => setCommentThreadModal((current) => ({
 		...current,
 		scrollOffset: Math.max(0, current.scrollOffset + delta),
 	}))
-	useScopedBindings({
-		when: commentThreadModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			return: openDiffCommentModal,
-			a: openDiffCommentModal,
-			c: openDiffCommentModal,
-			up: () => scrollCommentThread(-1),
-			k: () => scrollCommentThread(-1),
-			down: () => scrollCommentThread(1),
-			j: () => scrollCommentThread(1),
-			pageup: () => scrollCommentThread(-halfPage),
-			"ctrl+u": () => scrollCommentThread(-halfPage),
-			pagedown: () => scrollCommentThread(halfPage),
-			"ctrl+d": () => scrollCommentThread(halfPage),
-			"ctrl+v": () => scrollCommentThread(halfPage),
-		},
-	})
 
 	const moveLabelSelection = (delta: -1 | 1) => setLabelModal((current) => {
 		const max = Math.max(0, filterLabels(labelModal.availableLabels, labelModal.query).length - 1)
 		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
-	})
-	useScopedBindings({
-		when: labelModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			return: toggleLabelAtIndex,
-			up: () => moveLabelSelection(-1),
-			k: () => moveLabelSelection(-1),
-			down: () => moveLabelSelection(1),
-			j: () => moveLabelSelection(1),
-		},
-	})
-
-	useScopedBindings({
-		when: themeModalActive,
-		bindings: {
-			escape: () => {
-				if (themeModal.filterMode) updateThemeQuery("", { filterMode: false })
-				else closeThemeModal(false)
-			},
-			"/": () => updateThemeQuery("", { filterMode: true }),
-			return: () => {
-				if (themeModal.filterMode && filterThemeDefinitions(themeModal.query).length === 0) return
-				closeThemeModal(true)
-			},
-			up: () => moveThemeSelection(-1),
-			down: () => moveThemeSelection(1),
-			k: () => { if (!themeModal.filterMode) moveThemeSelection(-1) },
-			j: () => { if (!themeModal.filterMode) moveThemeSelection(1) },
-		},
-	})
-
-	useScopedBindings({
-		when: openRepositoryModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			return: openRepositoryFromInput,
-		},
-	})
-
-	useScopedBindings({
-		when: commentModalActive,
-		bindings: {
-			escape: closeActiveModal,
-			"ctrl+s": submitActiveComment,
-			"ctrl+a": () => editComment(moveLineStart),
-			"ctrl+e": () => editComment(moveLineEnd),
-			"ctrl+b": () => editComment(editorMoveLeft),
-			"ctrl+f": () => editComment(editorMoveRight),
-			"ctrl+w": () => editComment(deleteWordBackward),
-			"ctrl+u": () => editComment(deleteToLineStart),
-			"ctrl+k": () => editComment(deleteToLineEnd),
-			"ctrl+d": () => editComment(editorDeleteForward),
-			"meta+b": () => editComment(moveWordBackward),
-			"meta+left": () => editComment(moveWordBackward),
-			"meta+f": () => editComment(moveWordForward),
-			"meta+right": () => editComment(moveWordForward),
-			"meta+backspace": () => editComment(deleteWordBackward),
-			"meta+delete": () => editComment(deleteWordForward),
-			backspace: () => editComment(editorBackspace),
-			delete: () => editComment(editorDeleteForward),
-			left: () => editComment(editorMoveLeft),
-			right: () => editComment(editorMoveRight),
-			up: () => editComment((state) => moveVertically(state, -1)),
-			down: () => editComment((state) => moveVertically(state, 1)),
-			home: () => editComment(moveLineStart),
-			end: () => editComment(moveLineEnd),
-			"shift+return": () => editComment((state) => insertText(state, "\n")),
-			return: submitActiveComment,
-		},
 	})
 
 	const moveCommandPaletteSelection = (delta: -1 | 1) => setCommandPalette((current) => {
 		const selectedIndex = clampCommandIndex(current.selectedIndex + delta, commandPaletteCommands)
 		return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
 	})
-	useScopedBindings({
-		when: commandPaletteActive,
-		bindings: {
-			escape: closeActiveModal,
-			"ctrl+c": closeActiveModal,
-			return: () => { if (selectedCommand) runCommand(selectedCommand, { notifyDisabled: true, closePalette: true }) },
-			up: () => moveCommandPaletteSelection(-1),
-			down: () => moveCommandPaletteSelection(1),
-		},
-	})
-
-	useScopedBindings({
-		when: filterMode,
-		bindings: {
-			escape: () => { setFilterDraft(filterQuery); setFilterMode(false) },
-			return: () => { setFilterQuery(filterDraft); setFilterMode(false) },
-		},
-	})
-
-	useScopedBindings({
-		when: diffFullView && !diffCommentMode,
-		bindings: {
-			...scrollBindings(scrollDiffBy, halfPage, scrollDiffTo),
-			escape: "diff.close",
-			return: "diff.close",
-			c: "diff.comment-mode",
-			v: "diff.toggle-view",
-			w: "diff.toggle-wrap",
-			r: "diff.reload",
-			"]": "diff.next-file",
-			right: "diff.next-file",
-			l: "diff.next-file",
-			"[": "diff.previous-file",
-			left: "diff.previous-file",
-			h: "diff.previous-file",
-			o: "pull.open-browser",
-		},
-	})
-
-	useScopedBindings({
-		when: diffFullView && diffCommentMode,
-		bindings: {
-			escape: () => setDiffCommentMode(false),
-			c: "diff.comment-mode",
-			return: () => {
-				if (selectedDiffCommentThread.length > 0) openDiffCommentThreadModal()
-				else openDiffCommentModal()
-			},
-			a: "diff.add-comment",
-			pageup: () => moveDiffCommentAnchor(-halfPage),
-			"ctrl+u": () => moveDiffCommentAnchor(-halfPage),
-			pagedown: () => moveDiffCommentAnchor(halfPage),
-			"ctrl+d": () => moveDiffCommentAnchor(halfPage),
-			"ctrl+v": () => moveDiffCommentAnchor(halfPage),
-			"shift+up": () => moveDiffCommentAnchor(-8),
-			"shift+k": () => moveDiffCommentAnchor(-8),
-			"meta+up": () => moveDiffCommentAnchor(-8),
-			"meta+k": () => moveDiffCommentAnchor(-8),
-			"shift+down": () => moveDiffCommentAnchor(8),
-			"shift+j": () => moveDiffCommentAnchor(8),
-			"meta+down": () => moveDiffCommentAnchor(8),
-			"meta+j": () => moveDiffCommentAnchor(8),
-			up: () => moveDiffCommentAnchor(-1),
-			k: () => moveDiffCommentAnchor(-1),
-			down: () => moveDiffCommentAnchor(1),
-			j: () => moveDiffCommentAnchor(1),
-			left: () => selectDiffCommentSide("LEFT"),
-			h: () => selectDiffCommentSide("LEFT"),
-			right: () => selectDiffCommentSide("RIGHT"),
-			l: () => selectDiffCommentSide("RIGHT"),
-			"]": "diff.next-file",
-			"[": "diff.previous-file",
-		},
-	})
+	const runCommandPaletteCommand = (command: AppCommand) => {
+		runCommand(command, { notifyDisabled: true, closePalette: true })
+	}
 
 	const scrollDetailFullViewBy = (delta: number) => {
 		detailScrollRef.current?.scrollBy({ x: 0, y: delta })
@@ -3333,55 +3191,16 @@ export const App = () => {
 	const activeCloseCommand = () => activeSurfaceRef.current === "issues" ? "issue.close" : activeSurfaceRef.current === "pullRequests" ? "pull.close" : "aux.manage"
 	const activeOpenBrowserCommand = () => activeSurfaceRef.current === "issues" ? "issue.open-browser" : activeSurfaceRef.current === "pullRequests" ? "pull.open-browser" : "aux.open-browser"
 	const activeCopyCommand = () => activeSurfaceRef.current === "issues" ? "issue.copy-metadata" : activeSurfaceRef.current === "pullRequests" ? "pull.copy-metadata" : "aux.copy-metadata"
+	const translateListCommand = (id: string) => {
+		if (id === "pull.refresh") return activeRefreshCommand()
+		if (id === "pull.close") return activeCloseCommand()
+		if (id === "pull.open-browser") return activeOpenBrowserCommand()
+		if (id === "pull.copy-metadata") return activeCopyCommand()
+		if (id === "pull.labels" && activeSurfaceRef.current === "issues") return "issue.labels"
+		if (id === "diff.open" && activeSurfaceRef.current !== "pullRequests") return "detail.open"
+		return id
+	}
 	const activeSelectedItem = activeSurface === "issues" ? selectedIssue : activeSurface === "pullRequests" ? selectedPullRequest : selectedAuxiliaryItem
-	useScopedBindings({
-		when: detailFullView,
-		bindings: {
-			...scrollBindings(scrollDetailFullViewBy, halfPage, scrollDetailFullViewTo),
-			escape: "detail.close",
-			return: "detail.close",
-			i: "surface.issues",
-			p: "surface.pull-requests",
-			n: "surface.notifications",
-			"shift+d": "surface.discussions",
-			"shift+r": "surface.myRepos",
-			f: "surface.stars",
-			"shift+h": "surface.sharedRepos",
-			w: "surface.watchedRepos",
-			tab: () => switchQueueMode(1),
-			"shift+tab": () => switchQueueMode(-1),
-			t: "theme.open",
-			c: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
-			},
-			d: () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("diff.open")
-			},
-			x: () => runCommandByIdRef.current(activeCloseCommand()),
-			u: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
-			},
-			l: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.labels")
-				else if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.labels")
-			},
-			m: () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
-			},
-			"shift+m": () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
-			},
-			s: () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
-			},
-			"shift+s": () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
-			},
-			r: () => runCommandByIdRef.current(activeRefreshCommand()),
-			o: () => runCommandByIdRef.current(activeOpenBrowserCommand()),
-			y: () => runCommandByIdRef.current(activeCopyCommand()),
-		},
-	})
 
 	const moveSelectedToPreviousGroup = () => setSelectedIndex((current) => {
 		if (activeVisibleCount === 0 || activeGroupStarts.length === 0) return 0
@@ -3399,6 +3218,15 @@ export const App = () => {
 		if (activeVisibleCount === 0) return 0
 		return Math.max(0, Math.min(activeVisibleCount - 1, current + delta))
 	})
+	const stepSelectedUp = (count = 1) => stepSelected(-count)
+	const stepSelectedDown = (count = 1) => {
+		if (activeVisibleCount === 0) return
+		if (selectedIndex + count >= activeVisibleCount) {
+			if (activeSurface === "issues" && hasMoreIssues) loadMoreIssues()
+			else if (activeSurface === "pullRequests" && hasMorePullRequests) loadMorePullRequests()
+		}
+		stepSelected(count)
+	}
 	const stepSelectedDownWithLoadMore = () => {
 		if (activeVisibleCount > 0 && selectedIndex >= activeVisibleCount - 1 && (activeSurface === "issues" ? hasMoreIssues : activeSurface === "pullRequests" ? hasMorePullRequests : false)) {
 			if (activeSurface === "issues") loadMoreIssues()
@@ -3414,74 +3242,176 @@ export const App = () => {
 		if (activeVisibleCount === 0) return 0
 		return current <= 0 ? activeVisibleCount - 1 : current - 1
 	})
-	useScopedBindings({
-		when: globalLayerActive,
-		bindings: {
-			"/": "filter.open",
-			r: () => runCommandByIdRef.current(activeRefreshCommand()),
-			t: "theme.open",
-			i: "surface.issues",
-			p: "surface.pull-requests",
-			n: "surface.notifications",
-			"shift+d": "surface.discussions",
-			"shift+r": "surface.myRepos",
-			f: "surface.stars",
-			"shift+h": "surface.sharedRepos",
-			w: "surface.watchedRepos",
-			c: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.comment")
-			},
-			d: () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("diff.open")
-			},
-			l: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.labels")
-				else if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.labels")
-			},
-			m: () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
-			},
-			"shift+m": () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.merge")
-			},
-			x: () => runCommandByIdRef.current(activeCloseCommand()),
-			u: () => {
-				if (activeSurfaceRef.current === "issues") runCommandByIdRef.current("issue.reopen")
-			},
-			o: () => runCommandByIdRef.current(activeOpenBrowserCommand()),
-			s: () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
-			},
-			"shift+s": () => {
-				if (activeSurfaceRef.current === "pullRequests") runCommandByIdRef.current("pull.toggle-draft")
-			},
-			y: () => runCommandByIdRef.current(activeCopyCommand()),
-			return: "detail.open",
-			tab: () => switchQueueMode(1),
-			"shift+tab": () => switchQueueMode(-1),
-			escape: () => { if (filterQuery.length > 0) runCommandByIdRef.current("filter.clear") },
-			home: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewTo(0) },
-			end: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewTo(Number.MAX_SAFE_INTEGER) },
-			pageup: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewBy(-halfPage) },
-			pagedown: () => { if (isWideLayout && activeSelectedItem) scrollDetailPreviewBy(halfPage) },
-			"[": moveSelectedToPreviousGroup,
-			"meta+up": moveSelectedToPreviousGroup,
-			"meta+k": moveSelectedToPreviousGroup,
-			"shift+k": moveSelectedToPreviousGroup,
-			"]": moveSelectedToNextGroup,
-			"meta+down": moveSelectedToNextGroup,
-			"meta+j": moveSelectedToNextGroup,
-			"shift+j": moveSelectedToNextGroup,
-			"ctrl+u": () => stepSelected(-halfPage),
-			"ctrl+d": () => stepSelected(halfPage),
-			up: stepSelectedUpWrap,
-			k: stepSelectedUpWrap,
-			down: stepSelectedDownWithLoadMore,
-			j: stepSelectedDownWithLoadMore,
-			"g g": () => setSelectedIndex(0),
-			"shift+g": () => setSelectedIndex(activeVisibleCount === 0 ? 0 : activeVisibleCount - 1),
+
+	const handleQuitOrClose = () => {
+		if (themeModalActive) {
+			closeThemeModal(false)
+			return
+		}
+		if (activeModal._tag !== "None") {
+			closeActiveModal()
+			return
+		}
+		runCommandById("app.quit")
+	}
+
+	const moveDiffCommentToBoundary = (boundary: "first" | "last") => {
+		if (diffCommentAnchors.length === 0) return
+		setDiffCommentAnchorIndex(boundary === "first" ? 0 : diffCommentAnchors.length - 1)
+	}
+
+	const appCtx: AppCtx = {
+		closeModalActive,
+		confirmActionModalActive,
+		mergeModalActive,
+		commentThreadModalActive,
+		changedFilesModalActive: false,
+		submitReviewModalActive: false,
+		labelModalActive,
+		themeModalActive,
+		openRepositoryModalActive,
+		commentModalActive,
+		commandPaletteActive,
+		filterMode,
+		diffFullView,
+		detailFullView,
+		textInputActive: commentModalActive || commandPaletteActive || openRepositoryModalActive || labelModalActive || filterMode || (themeModalActive && themeModal.filterMode),
+		closeModal: { closeModal: closeActiveModal, confirmClose: confirmCloseTarget },
+		confirmActionModal: { closeModal: closeActiveModal, confirmClose: confirmAuxiliaryAction },
+		mergeModal: {
+			availableActionCount: availableMergeActions(mergeModal.info).length,
+			closeModal: closeActiveModal,
+			confirmMerge: confirmMergeAction,
+			moveSelection: moveMergeSelection,
 		},
-	})
+		commentThreadModal: {
+			halfPage,
+			closeModal: closeActiveModal,
+			openInlineComment: openDiffCommentModal,
+			scrollBy: scrollCommentThread,
+		},
+		changedFilesModal: { hasResults: false, closeModal: closeActiveModal, selectFile: () => undefined, moveSelection: () => undefined },
+		submitReviewModal: {
+			summaryFocused: false,
+			handleEscape: closeActiveModal,
+			submit: () => undefined,
+			focusSummary: () => undefined,
+			insertNewline: () => undefined,
+			moveActionSelection: () => undefined,
+			moveLeft: () => undefined,
+			moveRight: () => undefined,
+			moveUp: () => undefined,
+			moveDown: () => undefined,
+			moveLineStart: () => undefined,
+			moveLineEnd: () => undefined,
+			moveWordBackward: () => undefined,
+			moveWordForward: () => undefined,
+			backspace: () => undefined,
+			deleteForward: () => undefined,
+			deleteWordBackward: () => undefined,
+			deleteWordForward: () => undefined,
+			deleteToLineStart: () => undefined,
+			deleteToLineEnd: () => undefined,
+		},
+		labelModal: { closeModal: closeActiveModal, toggleSelected: toggleLabelAtIndex, moveSelection: moveLabelSelection },
+		themeModal: {
+			filterMode: themeModal.filterMode,
+			hasFilteredResults: filterThemeDefinitions(themeModal.query).length > 0,
+			closeWithoutSaving: () => closeThemeModal(false),
+			clearFilter: () => updateThemeQuery("", { filterMode: false }),
+			enterFilterMode: () => updateThemeQuery("", { filterMode: true }),
+			confirmSelection: () => closeThemeModal(true),
+			moveSelection: moveThemeSelection,
+		},
+		openRepositoryModal: { closeModal: closeActiveModal, openFromInput: openRepositoryFromInput },
+		commentModal: {
+			closeModal: closeActiveModal,
+			submit: submitActiveComment,
+			insertNewline: () => editComment((state) => insertText(state, "\n")),
+			moveLeft: () => editComment(editorMoveLeft),
+			moveRight: () => editComment(editorMoveRight),
+			moveUp: () => editComment((state) => moveVertically(state, -1)),
+			moveDown: () => editComment((state) => moveVertically(state, 1)),
+			moveLineStart: () => editComment(moveLineStart),
+			moveLineEnd: () => editComment(moveLineEnd),
+			moveWordBackward: () => editComment(moveWordBackward),
+			moveWordForward: () => editComment(moveWordForward),
+			backspace: () => editComment(editorBackspace),
+			deleteForward: () => editComment(editorDeleteForward),
+			deleteWordBackward: () => editComment(deleteWordBackward),
+			deleteWordForward: () => editComment(deleteWordForward),
+			deleteToLineStart: () => editComment(deleteToLineStart),
+			deleteToLineEnd: () => editComment(deleteToLineEnd),
+		},
+		commandPalette: {
+			closeModal: closeActiveModal,
+			runSelected: () => { if (selectedCommand) runCommandPaletteCommand(selectedCommand) },
+			moveSelection: moveCommandPaletteSelection,
+		},
+		filterModeCtx: {
+			cancel: () => { setFilterDraft(filterQuery); setFilterMode(false) },
+			commit: () => { setFilterQuery(filterDraft); setFilterMode(false) },
+		},
+		diff: {
+			halfPage,
+			handleEscape: () => { if (diffCommentMode) setDiffCommentMode(false); else runCommandById("diff.close") },
+			openSelectedComment: () => { if (selectedDiffCommentThread.length > 0) openDiffCommentThreadModal(); else openDiffCommentModal() },
+			toggleRange: () => runCommandById("diff.toggle-range"),
+			toggleView: () => runCommandById("diff.toggle-view"),
+			toggleWrap: () => runCommandById("diff.toggle-wrap"),
+			reload: () => runCommandById("diff.reload"),
+			nextThread: () => moveDiffCommentAnchor(1),
+			previousThread: () => moveDiffCommentAnchor(-1),
+			moveAnchor: (delta, options) => moveDiffCommentAnchor(delta, options),
+			moveAnchorToBoundary: moveDiffCommentToBoundary,
+			alignAnchor: () => undefined,
+			selectSide: selectDiffCommentSide,
+			openChangedFiles: () => runCommandById("diff.changed-files"),
+			openSubmitReview: () => runCommandById("pull.submit-review"),
+			nextFile: () => runCommandById("diff.next-file"),
+			previousFile: () => runCommandById("diff.previous-file"),
+			openInBrowser: () => runCommandById("pull.open-browser"),
+		},
+		detail: {
+			halfPage,
+			scrollBy: scrollDetailFullViewBy,
+			scrollTo: scrollDetailFullViewTo,
+			closeDetail: () => runCommandById("detail.close"),
+			openTheme: () => runCommandById("theme.open"),
+			openDiff: () => { if (activeSurfaceRef.current === "pullRequests") runCommandById("diff.open") },
+			openReview: () => { if (activeSurfaceRef.current === "pullRequests") runCommandById("pull.submit-review") },
+			closePullRequest: () => runCommandById(activeCloseCommand()),
+			openLabels: () => runCommandById(activeSurfaceRef.current === "issues" ? "issue.labels" : "pull.labels"),
+			openMerge: () => { if (activeSurfaceRef.current === "pullRequests") runCommandById("pull.merge") },
+			toggleDraft: () => { if (activeSurfaceRef.current === "pullRequests") runCommandById("pull.toggle-draft") },
+			refresh: () => runCommandById(activeRefreshCommand()),
+			openInBrowser: () => runCommandById(activeOpenBrowserCommand()),
+			copyMetadata: () => runCommandById(activeCopyCommand()),
+		},
+		listNav: {
+			halfPage,
+			visibleCount: activeVisibleCount,
+			hasFilter: filterQuery.length > 0,
+			canScrollDetailPreview: isWideLayout && activeSelectedItem !== null,
+			runCommandById: (id) => { runCommandById(translateListCommand(id)) },
+			switchQueueMode,
+			scrollDetailPreviewBy,
+			scrollDetailPreviewTo,
+			clearFilter: () => { runCommandById("filter.clear") },
+			stepSelected,
+			stepSelectedUp,
+			stepSelectedDown,
+			stepSelectedUpWrap,
+			stepSelectedDownWithLoadMore,
+			moveSelectedToPreviousGroup,
+			moveSelectedToNextGroup,
+			setSelected: (index) => setSelectedIndex(index),
+		},
+		openCommandPalette: () => { runCommandById("command.open") },
+		handleQuitOrClose,
+	}
+
+	useKeymap(appKeymap, appCtx, useOpenTuiSubscribe())
 
 	useKeyboard((key) => {
 		lastUserInputAtRef.current = Date.now()
@@ -3506,18 +3436,6 @@ export const App = () => {
 			return
 		}
 
-		if ((key.name === "q" && !commentModalActive && !(themeModalActive && themeModal.filterMode)) || (key.ctrl && key.name === "c")) {
-			if (themeModalActive) {
-				closeThemeModal(false)
-				return
-			}
-			if (activeModal._tag !== "None") {
-				closeActiveModal()
-				return
-			}
-			runCommandById("app.quit")
-			return
-		}
 
 		if (themeModalActive) {
 			if (themeModal.filterMode && isSingleLineInputKey(key)) {
@@ -3561,6 +3479,8 @@ export const App = () => {
 		bodyLines: DETAIL_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
 		showChecks: true,
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
 	}) > wideBodyHeight
 	const wideFullscreenIssueDetailScrollable = getIssueDetailsPaneHeight({
 		issue: selectedIssue,
@@ -3579,6 +3499,8 @@ export const App = () => {
 		contentWidth: fullscreenContentWidth,
 		bodyLines: DETAIL_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
 	}) > wideBodyHeight
 	const narrowFullscreenIssueDetailScrollable = getIssueDetailsPaneHeight({
 		issue: selectedIssue,
@@ -3594,7 +3516,7 @@ export const App = () => {
 	}) > wideBodyHeight
 	const wideDetailHeaderHeight = getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true)
 	const wideDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideDetailHeaderHeight)
-	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth)
+	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth, selectedConversationItems, selectedConversationStatus)
 	const wideDetailBodyScrollable = wideDetailBodyHeight > wideDetailBodyViewportHeight
 	const wideIssueDetailHeaderHeight = getIssueDetailHeaderHeight(selectedIssue, rightPaneWidth)
 	const wideIssueDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideIssueDetailHeaderHeight)
@@ -3674,8 +3596,8 @@ export const App = () => {
 	const commentThreadModalHeight = commentThreadLayout.height
 	const commentThreadModalLeft = commentThreadLayout.left
 	const commentThreadModalTop = commentThreadLayout.top
-	const commentAnchorLabel = selectedDiffCommentAnchor
-		? `${selectedDiffCommentAnchor.path}:${selectedDiffCommentAnchor.line} ${selectedDiffCommentAnchor.side === "RIGHT" ? "right" : "left"}`
+	const commentAnchorLabel = selectedDiffCommentAnchor && selectedDiffCommentLabel
+		? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}`
 		: "No diff line selected"
 	const activeCommentAnchorLabel = activeSurface === "issues" && selectedIssue
 		? `${selectedIssue.repository} #${selectedIssue.number}`
@@ -3720,6 +3642,7 @@ export const App = () => {
 					stackedFiles={stackedDiffFiles}
 					scrollTop={diffScrollTop}
 					view={effectiveDiffRenderView}
+					whitespaceMode={diffWhitespaceMode}
 					wrapMode={diffWrapMode}
 					paneWidth={contentWidth}
 					height={wideBodyHeight}
@@ -3727,6 +3650,7 @@ export const App = () => {
 					scrollRef={diffScrollRef}
 					setDiffRef={setDiffRenderableRef}
 					selectedCommentAnchor={selectedDiffCommentAnchor}
+					selectedCommentLabel={selectedDiffCommentLabel}
 					selectedCommentThread={selectedDiffCommentThread}
 					onSelectCommentLine={selectDiffCommentLine}
 					themeId={themeId}
@@ -3785,6 +3709,8 @@ export const App = () => {
 							placeholderContent={detailPlaceholderContent}
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
+							conversationItems={selectedConversationItems}
+							conversationStatus={selectedConversationStatus}
 						/>
 					</scrollbox>
 				</box>
@@ -3837,7 +3763,7 @@ export const App = () => {
 							<>
 								<DetailHeader key={`pull-header-${selectedPullRequest.url}`} pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
 								<scrollbox key={`pull-body-${selectedPullRequest.url}`} ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>
-									<DetailBody pullRequest={selectedPullRequest} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} />
+									<DetailBody pullRequest={selectedPullRequest} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} conversationItems={selectedConversationItems} conversationStatus={selectedConversationStatus} />
 								</scrollbox>
 							</>
 						) : (
@@ -3888,6 +3814,8 @@ export const App = () => {
 							placeholderContent={detailPlaceholderContent}
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
+							conversationItems={selectedConversationItems}
+							conversationStatus={selectedConversationStatus}
 						/>
 					</scrollbox>
 				</box>
@@ -3898,7 +3826,7 @@ export const App = () => {
 					) : isAuxiliarySurface(activeSurface) ? (
 						<AuxiliaryDetailsPane item={selectedAuxiliaryItem} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} themeId={themeId} />
 					) : (
-						<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
+						<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} conversationItems={selectedConversationItems} conversationStatus={selectedConversationStatus} />
 					)}
 					<Divider width={contentWidth} />
 					<box flexGrow={1} flexDirection="column">
@@ -4037,7 +3965,7 @@ export const App = () => {
 					modalHeight={commandPaletteHeight}
 					offsetLeft={commandPaletteLeft}
 					offsetTop={commandPaletteTop}
-					onSelectCommandIndex={setSelectedCommandIndex}
+					onSelectCommandIndex={(index) => setCommandPalette((current) => ({ ...current, selectedIndex: index }))}
 					onRunCommand={(command) => runCommandByIdRef.current(command.id)}
 				/>
 			) : null}

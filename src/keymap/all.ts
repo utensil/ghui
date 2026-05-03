@@ -17,6 +17,7 @@ import { themeModalKeymap, type ThemeModalCtx } from "./themeModal.ts"
 export interface AppCtx {
 	// Active flags
 	readonly closeModalActive: boolean
+	readonly confirmActionModalActive: boolean
 	readonly mergeModalActive: boolean
 	readonly commentThreadModalActive: boolean
 	readonly changedFilesModalActive: boolean
@@ -36,6 +37,7 @@ export interface AppCtx {
 
 	// Per-layer narrow contexts
 	readonly closeModal: CloseModalCtx
+	readonly confirmActionModal: CloseModalCtx
 	readonly mergeModal: MergeModalCtx
 	readonly commentThreadModal: CommentThreadModalCtx
 	readonly changedFilesModal: ChangedFilesModalCtx
@@ -59,6 +61,7 @@ const App = context<AppCtx>()
 
 const modalActive = (a: AppCtx): boolean =>
 	a.closeModalActive ||
+	a.confirmActionModalActive ||
 	a.mergeModalActive ||
 	a.commentThreadModalActive ||
 	a.changedFilesModalActive ||
@@ -92,6 +95,7 @@ export const appKeymap = App(
 
 	// Modal layers
 	closeModalKeymap.scope((a) => a.closeModalActive && a.closeModal),
+	closeModalKeymap.scope((a) => a.confirmActionModalActive && a.confirmActionModal),
 	mergeModalKeymap.scope((a) => a.mergeModalActive && a.mergeModal),
 	commentThreadModalKeymap.scope((a) => a.commentThreadModalActive && a.commentThreadModal),
 	changedFilesModalKeymap.scope((a) => a.changedFilesModalActive && a.changedFilesModal),
