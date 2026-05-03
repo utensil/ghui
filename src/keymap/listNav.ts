@@ -32,6 +32,7 @@ export const listNavKeymap = List(
 	{ id: "list.surface.pull-requests", title: "Show pull requests", keys: ["p"], run: (s) => s.runCommandById("surface.pull-requests") },
 	{ id: "list.surface.notifications", title: "Show notifications", keys: ["n"], run: (s) => s.runCommandById("surface.notifications") },
 	{ id: "list.surface.discussions", title: "Show discussions", keys: ["shift+d"], run: (s) => s.runCommandById("surface.discussions") },
+	{ id: "list.surface.myRepos", title: "Show my repositories", keys: ["shift+u"], run: (s) => s.runCommandById("surface.myRepos") },
 	{ id: "list.surface.stars", title: "Show starred repositories", keys: ["f"], run: (s) => s.runCommandById("surface.stars") },
 	{ id: "list.surface.sharedRepos", title: "Show shared repositories", keys: ["shift+h"], run: (s) => s.runCommandById("surface.sharedRepos") },
 	{ id: "list.surface.watchedRepos", title: "Show watched repositories", keys: ["w"], run: (s) => s.runCommandById("surface.watchedRepos") },

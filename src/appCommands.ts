@@ -189,7 +189,7 @@ export const buildAppCommands = ({
 		const shortcuts = {
 			notifications: "n",
 			discussions: "D",
-			myRepos: undefined,
+			myRepos: "U",
 			stars: "f",
 			sharedRepos: "H",
 			watchedRepos: "w",
