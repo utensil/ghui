@@ -1,5 +1,6 @@
 import { Data } from "effect"
 import type { AppSurface } from "../domain.js"
+import { surfaceShortcutHint } from "../surfaceShortcuts.js"
 import { colors } from "./colors.js"
 import { HintRow, type HintItem } from "./primitives.js"
 
@@ -64,8 +65,7 @@ const diffViewHints: readonly HintItem[] = [
 
 const isPullRequestSurface = (surface: AppSurface | undefined) => surface === "pullRequests"
 const isQueueSurface = (surface: AppSurface | undefined) => isPullRequestSurface(surface) || surface === "issues"
-const surfaceShortcutHint = "i/p/n/D/R/f/H/w"
-const manageHintLabel = (ctx: HintsContext) => isQueueSurface(ctx.surface) ? "close" : ctx.manageLabel ?? "manage"
+const manageHintLabel = (ctx: HintsContext) => (isQueueSurface(ctx.surface) ? "close" : (ctx.manageLabel ?? "manage"))
 
 const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "esc", label: "back" },
@@ -92,7 +92,12 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		{ key: "/", label: "filter" },
 		{ key: "t", label: "theme" },
 		{ key: "esc", label: "clear", when: ctx.showFilterClear },
-		{ key: "retry", label: retrying ? `${(ctx.retryProgress as { attempt: number; max: number }).attempt}/${(ctx.retryProgress as { attempt: number; max: number }).max}` : "", when: retrying, keyFg: colors.status.pending },
+		{
+			key: "retry",
+			label: retrying ? `${(ctx.retryProgress as { attempt: number; max: number }).attempt}/${(ctx.retryProgress as { attempt: number; max: number }).max}` : "",
+			when: retrying,
+			keyFg: colors.status.pending,
+		},
 		{ key: ctx.loadingIndicator, label: "loading", when: !retrying && ctx.isLoading, keyFg: colors.status.pending },
 		{ key: "r", label: "retry", when: ctx.hasError },
 		{ key: "tab", label: "queue", when: isQueueSurface(ctx.surface) },

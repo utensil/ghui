@@ -1,4 +1,5 @@
 import { context } from "@ghui/keymap"
+import { surfaceShortcutKeys } from "../surfaceShortcuts.js"
 import { countedVerticalBindings } from "./helpers.ts"
 
 export interface ListNavCtx {
@@ -28,14 +29,14 @@ export const listNavKeymap = List(
 	{ id: "list.filter", title: "Filter", keys: ["/"], run: (s) => s.runCommandById("filter.open") },
 	{ id: "list.refresh", title: "Refresh", keys: ["r"], run: (s) => s.runCommandById("pull.refresh") },
 	{ id: "list.theme", title: "Theme", keys: ["t"], run: (s) => s.runCommandById("theme.open") },
-	{ id: "list.surface.issues", title: "Show issues", keys: ["i"], run: (s) => s.runCommandById("surface.issues") },
-	{ id: "list.surface.pull-requests", title: "Show pull requests", keys: ["p"], run: (s) => s.runCommandById("surface.pull-requests") },
-	{ id: "list.surface.notifications", title: "Show notifications", keys: ["n"], run: (s) => s.runCommandById("surface.notifications") },
-	{ id: "list.surface.discussions", title: "Show discussions", keys: ["shift+d"], run: (s) => s.runCommandById("surface.discussions") },
-	{ id: "list.surface.myRepos", title: "Show my repositories", keys: ["shift+u"], run: (s) => s.runCommandById("surface.myRepos") },
-	{ id: "list.surface.stars", title: "Show starred repositories", keys: ["f"], run: (s) => s.runCommandById("surface.stars") },
-	{ id: "list.surface.sharedRepos", title: "Show shared repositories", keys: ["shift+h"], run: (s) => s.runCommandById("surface.sharedRepos") },
-	{ id: "list.surface.watchedRepos", title: "Show watched repositories", keys: ["w"], run: (s) => s.runCommandById("surface.watchedRepos") },
+	{ id: "list.surface.issues", title: "Show issues", keys: [surfaceShortcutKeys.issues], run: (s) => s.runCommandById("surface.issues") },
+	{ id: "list.surface.pull-requests", title: "Show pull requests", keys: [surfaceShortcutKeys.pullRequests], run: (s) => s.runCommandById("surface.pull-requests") },
+	{ id: "list.surface.notifications", title: "Show notifications", keys: [surfaceShortcutKeys.notifications], run: (s) => s.runCommandById("surface.notifications") },
+	{ id: "list.surface.discussions", title: "Show discussions", keys: [surfaceShortcutKeys.discussions], run: (s) => s.runCommandById("surface.discussions") },
+	{ id: "list.surface.myRepos", title: "Show my repositories", keys: [surfaceShortcutKeys.myRepos], run: (s) => s.runCommandById("surface.myRepos") },
+	{ id: "list.surface.stars", title: "Show starred repositories", keys: [surfaceShortcutKeys.stars], run: (s) => s.runCommandById("surface.stars") },
+	{ id: "list.surface.sharedRepos", title: "Show shared repositories", keys: [surfaceShortcutKeys.sharedRepos], run: (s) => s.runCommandById("surface.sharedRepos") },
+	{ id: "list.surface.watchedRepos", title: "Show watched repositories", keys: [surfaceShortcutKeys.watchedRepos], run: (s) => s.runCommandById("surface.watchedRepos") },
 	{ id: "list.diff", title: "Open diff", keys: ["d"], run: (s) => s.runCommandById("diff.open") },
 	{ id: "list.review", title: "Review pull request", keys: ["shift+r"], run: (s) => s.runCommandById("pull.submit-review") },
 	{ id: "list.labels", title: "Labels", keys: ["l"], run: (s) => s.runCommandById("pull.labels") },
