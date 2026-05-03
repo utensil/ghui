@@ -56,6 +56,7 @@ interface AppCommandActions {
 	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
 	readonly openCloseModal: () => void
+	readonly openCommitList: () => void
 	readonly openIssueCommentModal: () => void
 	readonly reopenIssue: () => void
 	readonly openPullRequestInBrowser: () => void
@@ -585,6 +586,14 @@ export const buildAppCommands = ({
 			shortcut: "x",
 			requireOpen: true,
 			run: actions.openCloseModal,
+		}),
+		forSelected({
+			id: "pull.commits",
+			title: "View pull request commits",
+			scope: "Pull request",
+			shortcut: "c",
+			keywords: ["commit", "log", "history"],
+			run: actions.openCommitList,
 		}),
 		forSelected({
 			id: "pull.open-browser",

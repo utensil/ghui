@@ -45,6 +45,7 @@ export const listNavKeymap = List(
 	{ id: "list.open-browser", title: "Open in browser", keys: ["o"], run: (s) => s.runCommandById("pull.open-browser") },
 	{ id: "list.toggle-draft", title: "Toggle draft", keys: ["s", "shift+s"], run: (s) => s.runCommandById("pull.toggle-draft") },
 	{ id: "list.copy", title: "Copy metadata", keys: ["y"], run: (s) => s.runCommandById("pull.copy-metadata") },
+	{ id: "list.commits", title: "View commits", keys: ["c"], run: (s) => s.runCommandById("pull.commits") },
 	{ id: "list.detail.open", title: "Open details", keys: ["return"], run: (s) => s.runCommandById("detail.open") },
 
 	// Queue mode tabs

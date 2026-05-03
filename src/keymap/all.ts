@@ -2,6 +2,7 @@ import { context } from "@ghui/keymap"
 import { changedFilesModalKeymap, type ChangedFilesModalCtx } from "./changedFilesModal.ts"
 import { closeModalKeymap, type CloseModalCtx } from "./closeModal.ts"
 import { commandPaletteKeymap, type CommandPaletteCtx } from "./commandPalette.ts"
+import { commitListModalKeymap, type CommitListModalCtx } from "./commitListModal.ts"
 import { commentModalKeymap, type CommentModalCtx } from "./commentModal.ts"
 import { commentThreadModalKeymap, type CommentThreadModalCtx } from "./commentThreadModal.ts"
 import { detailViewKeymap, type DetailViewCtx } from "./detailView.ts"
@@ -16,6 +17,7 @@ import { themeModalKeymap, type ThemeModalCtx } from "./themeModal.ts"
 
 export interface AppCtx {
 	// Active flags
+	readonly commitListModalActive: boolean
 	readonly closeModalActive: boolean
 	readonly confirmActionModalActive: boolean
 	readonly mergeModalActive: boolean
@@ -36,6 +38,7 @@ export interface AppCtx {
 	readonly textInputActive: boolean
 
 	// Per-layer narrow contexts
+	readonly commitListModal: CommitListModalCtx
 	readonly closeModal: CloseModalCtx
 	readonly confirmActionModal: CloseModalCtx
 	readonly mergeModal: MergeModalCtx
@@ -60,6 +63,7 @@ export interface AppCtx {
 const App = context<AppCtx>()
 
 const modalActive = (a: AppCtx): boolean =>
+	a.commitListModalActive ||
 	a.closeModalActive ||
 	a.confirmActionModalActive ||
 	a.mergeModalActive ||
@@ -94,6 +98,7 @@ export const appKeymap = App(
 	},
 
 	// Modal layers
+	commitListModalKeymap.scope((a) => a.commitListModalActive && a.commitListModal),
 	closeModalKeymap.scope((a) => a.closeModalActive && a.closeModal),
 	closeModalKeymap.scope((a) => a.confirmActionModalActive && a.confirmActionModal),
 	mergeModalKeymap.scope((a) => a.mergeModalActive && a.mergeModal),
