@@ -16,7 +16,11 @@
 		"noUncheckedIndexedAccess": true,
 		"skipLibCheck": true,
 		"types": ["bun"],
-		"plugins": [{ "name": "@effect/language-service" }]
+		"plugins": [{ "name": "@effect/language-service" }],
+		"paths": {
+			"@ghui/keymap": ["./packages/keymap/src/index.ts"],
+			"@ghui/keymap/react": ["./packages/keymap/src/react.ts"]
+		}
 	},
-	"include": ["src/**/*.ts", "src/**/*.tsx", "dev/**/*.ts", "dev/**/*.tsx"]
+	"include": ["src/**/*.ts", "src/**/*.tsx", "dev/**/*.ts", "dev/**/*.tsx", "packages/**/*.ts"]
 }
