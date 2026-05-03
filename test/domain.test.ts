@@ -4,27 +4,27 @@ import { viewCacheKey } from "../src/pullRequestViews.js"
 
 describe("pullRequestQueueSearchQualifier", () => {
 	test("repository mode with repository → repo: qualifier", () => {
-		expect(pullRequestQueueSearchQualifier("repository", "kit", "owner/name")).toBe("repo:owner/name")
+		expect(pullRequestQueueSearchQualifier("repository", "owner/name")).toBe("repo:owner/name")
 	})
 
-	test("repository mode without repository falls back to author: qualifier", () => {
-		expect(pullRequestQueueSearchQualifier("repository", "kit", null)).toBe("author:kit")
+	test("repository mode without repository falls back to @me", () => {
+		expect(pullRequestQueueSearchQualifier("repository", null)).toBe("author:@me")
 	})
 
-	test("authored mode → author:", () => {
-		expect(pullRequestQueueSearchQualifier("authored", "kit", null)).toBe("author:kit")
+	test("authored mode → author:@me", () => {
+		expect(pullRequestQueueSearchQualifier("authored", null)).toBe("author:@me")
 	})
 
 	test("review mode → review-requested:@me regardless of repository", () => {
-		expect(pullRequestQueueSearchQualifier("review", "kit", "owner/name")).toBe("review-requested:@me")
+		expect(pullRequestQueueSearchQualifier("review", "owner/name")).toBe("review-requested:@me")
 	})
 
 	test("assigned mode → assignee:@me", () => {
-		expect(pullRequestQueueSearchQualifier("assigned", "kit", null)).toBe("assignee:@me")
+		expect(pullRequestQueueSearchQualifier("assigned", null)).toBe("assignee:@me")
 	})
 
 	test("mentioned mode → mentions:@me", () => {
-		expect(pullRequestQueueSearchQualifier("mentioned", "kit", null)).toBe("mentions:@me")
+		expect(pullRequestQueueSearchQualifier("mentioned", null)).toBe("mentions:@me")
 	})
 })
 

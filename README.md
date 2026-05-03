@@ -44,15 +44,12 @@ bun run dev
 
 ## Configuration
 
-- `GHUI_AUTHOR`: author passed to `gh search prs`, defaults to `@me`
-- `GHUI_REPO`: optional `owner/name` repository queue for browsing all open PRs in a repo
 - `GHUI_PR_FETCH_LIMIT`: max PRs fetched, defaults to `200`
 
 Example:
 
 ```bash
-GHUI_AUTHOR=@me ghui
-GHUI_REPO=basecamp/omarchy ghui
+GHUI_PR_FETCH_LIMIT=100 ghui
 ```
 
 You can also copy `.env.example` to `.env` and edit the values locally.
@@ -70,10 +67,12 @@ You can also copy `.env.example` to `.env` and edit the values locally.
 - `esc`: return from expanded details, leave diff/comment mode, or close modal
 - `r`: refresh
 - `d`: view stacked diff for all changed files
-- `c`: enter or exit diff comment mode while viewing a diff
-- `up` / `down` / `pageup` / `pagedown`: move comment target while in diff comment mode
+- `shift-r`: review or approve the selected pull request
+- `up` / `down` / `pageup` / `pagedown`: move comment target while viewing a diff
 - `enter`: open a commented diff line, or start a comment on an uncommented line
-- `a`: add a comment while in diff comment mode
+- `v`: start or clear a multi-line diff comment range
+- `n` / `p`: jump between diff comment threads
+- `f`: open the changed-files navigator while viewing a diff
 - `left` / `right`: choose the deleted or added side while in split diff comment mode
 - `[` / `]`: switch files while viewing or commenting on a diff
 - `s`: toggle draft or ready-for-review state
@@ -84,3 +83,11 @@ You can also copy `.env.example` to `.env` and edit the values locally.
 - `o`: open PR in browser
 - `y`: copy PR metadata
 - `q`: quit
+
+Review submission:
+
+- Press `shift-r` to open the review modal.
+- Use `j` / `k` or `up` / `down` to choose Comment, Approve, or Request changes.
+- Press `enter` to move to the optional summary area.
+- Press `enter` again to submit, or `shift-enter` to insert a newline.
+- Press `esc` from the summary to return to action selection; press `esc` from action selection to cancel.

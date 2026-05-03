@@ -29,14 +29,20 @@ const readStream = async (stream: ReadableStream | null | undefined) => {
 	return Bun.readableStreamToText(stream)
 }
 
-export class CommandRunner extends Context.Service<CommandRunner, {
-	readonly run: (command: string, args: readonly string[], options?: RunOptions) => Effect.Effect<CommandResult, CommandError>
-	readonly runSchema: <S extends Schema.Top>(schema: S, command: string, args: readonly string[]) =>
-		Effect.Effect<S["Type"], CommandError | JsonParseError | Schema.SchemaError, S["DecodingServices"]>
-}>()("ghui/CommandRunner") {
+export class CommandRunner extends Context.Service<
+	CommandRunner,
+	{
+		readonly run: (command: string, args: readonly string[], options?: RunOptions) => Effect.Effect<CommandResult, CommandError>
+		readonly runSchema: <S extends Schema.Top>(
+			schema: S,
+			command: string,
+			args: readonly string[],
+		) => Effect.Effect<S["Type"], CommandError | JsonParseError | Schema.SchemaError, S["DecodingServices"]>
+	}
+>()("ghui/CommandRunner") {
 	static readonly layer = Layer.effect(
 		CommandRunner,
-		Effect.gen(function*() {
+		Effect.gen(function* () {
 			const runProcess = Effect.fn("CommandRunner.runProcess")((command: string, args: readonly string[], stdin: string | undefined) =>
 				Effect.tryPromise({
 					async try() {
@@ -55,16 +61,18 @@ export class CommandRunner extends Context.Service<CommandRunner, {
 						return { stdout, stderr, exitCode }
 					},
 					catch: (cause) => new CommandError({ command, args: [...args], detail: `Failed to run ${command}`, cause }),
-				})
+				}),
 			)
 
-			const run = Effect.fn("CommandRunner.run")(function*(command: string, args: readonly string[], options?: RunOptions) {
-				const result = yield* runProcess(command, args, options?.stdin).pipe(Effect.withSpan("ghui.command.runProcess", {
-					attributes: {
-						"process.command": command,
-						"process.argv.count": args.length,
-					},
-				}))
+			const run = Effect.fn("CommandRunner.run")(function* (command: string, args: readonly string[], options?: RunOptions) {
+				const result = yield* runProcess(command, args, options?.stdin).pipe(
+					Effect.withSpan("ghui.command.runProcess", {
+						attributes: {
+							"process.command": command,
+							"process.argv.count": args.length,
+						},
+					}),
+				)
 				if (result.exitCode !== 0) {
 					const detail = result.stderr.trim() || result.stdout.trim() || `exit code ${result.exitCode}`
 					return yield* new CommandError({ command, args: [...args], detail, cause: detail })
@@ -72,7 +80,7 @@ export class CommandRunner extends Context.Service<CommandRunner, {
 				return result
 			})
 
-			const runJson = Effect.fn("CommandRunner.runJson")(function*<A>(command: string, args: readonly string[]) {
+			const runJson = Effect.fn("CommandRunner.runJson")(function* <A>(command: string, args: readonly string[]) {
 				const result = yield* run(command, args)
 				return yield* Effect.try({
 					try: () => JSON.parse(result.stdout) as A,
@@ -80,7 +88,7 @@ export class CommandRunner extends Context.Service<CommandRunner, {
 				})
 			})
 
-			const runSchema = Effect.fn("CommandRunner.runSchema")(function*<S extends Schema.Top>(schema: S, command: string, args: readonly string[]) {
+			const runSchema = Effect.fn("CommandRunner.runSchema")(function* <S extends Schema.Top>(schema: S, command: string, args: readonly string[]) {
 				const value = yield* runJson<unknown>(command, args)
 				return yield* Schema.decodeUnknownEffect(schema)(value)
 			})

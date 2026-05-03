@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { AuxiliaryItem, AuxiliarySurface, CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
+import type { AuxiliaryItem, AuxiliarySurface, CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestConversationItem, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
 import { GitHubService } from "./GitHubService.js"
 
 export interface MockOptions {
@@ -189,6 +189,19 @@ const pageIssueItems = (source: readonly IssueItem[], cursor: string | null, pag
 	}
 }
 
+const mockDiff = `diff --git a/src/mockDiff.ts b/src/mockDiff.ts
+--- a/src/mockDiff.ts
++++ b/src/mockDiff.ts
+@@ -1,6 +1,6 @@
+ export const before = true
+-const oldOne = 1
++const newOne = 1
+-	sameName()
++	sameName()
+-const oldTwo = 2
++const newTwo = 2
+ export const after = true`
+
 export const MockGitHubService = {
 	layer: (options: MockOptions) => {
 		const items = buildMockPullRequests(options)
@@ -213,6 +226,27 @@ export const MockGitHubService = {
 		} satisfies PullRequestItem))
 		const findPullRequest = (repository: string, number: number) => items.find((item) => item.repository === repository && item.number === number) ?? items[0]!
 		const findIssue = (repository: string, number: number) => issues.find((item) => item.repository === repository && item.number === number) ?? issues[0]!
+		const conversationItems = (repository: string, number: number): readonly PullRequestConversationItem[] => [
+			{
+				_tag: "comment",
+				id: `mock-comment:${repository}:${number}:1`,
+				author: "mock-reviewer",
+				body: `Top-level discussion for #${number}. This should appear after the summary with its own separator.`,
+				createdAt: new Date(Date.now() - 3_600_000),
+				url: null,
+			},
+			{
+				_tag: "review-comment",
+				id: `mock-review:${repository}:${number}:1`,
+				author: "mock-reviewer",
+				body: "Inline review comment rendered in the same conversation stream.",
+				createdAt: new Date(Date.now() - 1_800_000),
+				url: null,
+				path: "src/App.tsx",
+				line: 42,
+				side: "RIGHT",
+			},
+		]
 
 		return Layer.succeed(
 			GitHubService,
@@ -251,8 +285,9 @@ export const MockGitHubService = {
 				listSharedRepositories: () => Effect.succeed(auxiliaryItems.sharedRepos),
 				listWatchedRepositories: () => Effect.succeed(auxiliaryItems.watchedRepos),
 				unwatchRepository: () => Effect.void,
-				getPullRequestDiff: (_repo, _number) => Effect.succeed(""),
+				getPullRequestDiff: (_repo, _number) => Effect.succeed(mockDiff),
 				listPullRequestComments: (_repo, _number) => Effect.succeed([] as readonly PullRequestReviewComment[]),
+				listPullRequestConversation: (repository, number) => Effect.succeed(conversationItems(repository, number)),
 				getPullRequestMergeInfo: (repository, number) => Effect.succeed({
 					repository,
 					number,

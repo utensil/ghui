@@ -11,7 +11,8 @@ export const singleLineText = (text: string) => text.replace(/[\r\n]+/g, " ")
 
 export const printableKeyText = (key: Pick<SingleLineInputKey, "ctrl" | "meta" | "sequence">) => {
 	if (key.ctrl || key.meta || key.sequence.length === 0) return null
-	return /^[^\x00-\x1f\x7f]+$/.test(key.sequence) ? key.sequence : null
+	// oxlint-disable-next-line no-control-regex -- intentional: skip control characters
+	return /^[^\u0000-\u001f\u007f]+$/.test(key.sequence) ? key.sequence : null
 }
 
 export const editSingleLineInput = (value: string, key: SingleLineInputKey) => {

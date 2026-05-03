@@ -46,12 +46,9 @@ export const pullRequestRowDisplay = (pullRequest: PullRequestItem, selected: bo
 	const isMerged = pullRequest.state === "merged"
 	const isClosed = pullRequest.state === "closed"
 	const isFinal = isMerged || isClosed
-	const indicatorFg = isMerged ? colors.status.passing
-		: isClosed ? colors.muted
-		: pullRequest.autoMergeEnabled ? colors.accent
-		: statusColor(pullRequest.reviewStatus)
+	const indicatorFg = isMerged ? colors.status.passing : isClosed ? colors.muted : pullRequest.autoMergeEnabled ? colors.accent : statusColor(pullRequest.reviewStatus)
 	const checkFg = isMerged ? colors.status.passing : isClosed ? colors.muted : statusColor(pullRequest.checkStatus)
-	const checkText = isMerged ? "merged" : isClosed ? "closed" : pullRequest.checkSummary?.replace(/^checks\s+/, "") ?? ""
+	const checkText = isMerged ? "merged" : isClosed ? "closed" : (pullRequest.checkSummary?.replace(/^checks\s+/, "") ?? "")
 	return {
 		indicatorFg,
 		rowFg: selected ? colors.selectedText : isFinal ? colors.muted : colors.text,
@@ -83,7 +80,7 @@ export const labelTextColor = (color: string) => {
 	return "#f8fafc"
 }
 
-export const groupBy = <T,>(items: readonly T[], getKey: (item: T) => string, orderedKeys: readonly string[] = []) => {
+export const groupBy = <T>(items: readonly T[], getKey: (item: T) => string, orderedKeys: readonly string[] = []) => {
 	const groups = new Map<string, T[]>()
 	for (const item of items) {
 		const key = getKey(item)

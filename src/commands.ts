@@ -2,8 +2,7 @@ export type CommandScope = "Global" | "View" | "Pull request" | "Issue" | "GitHu
 
 const SCOPE_ORDER: readonly CommandScope[] = ["Global", "View", "Pull request", "Diff", "Navigation", "System"]
 
-export const sortCommandsByScope = (commands: readonly AppCommand[]) =>
-	[...commands].sort((left, right) => SCOPE_ORDER.indexOf(left.scope) - SCOPE_ORDER.indexOf(right.scope))
+export const sortCommandsByScope = (commands: readonly AppCommand[]) => [...commands].sort((left, right) => SCOPE_ORDER.indexOf(left.scope) - SCOPE_ORDER.indexOf(right.scope))
 
 export interface AppCommand {
 	readonly id: string
@@ -20,9 +19,18 @@ export const defineCommand = (command: AppCommand): AppCommand => command
 
 export const commandEnabled = (command: AppCommand) => !command.disabledReason
 
-const normalize = (text: string) => text.toLowerCase().replace(/[^a-z0-9#]+/g, " ").trim()
+const normalize = (text: string) =>
+	text
+		.toLowerCase()
+		.replace(/[^a-z0-9#]+/g, " ")
+		.trim()
 
-const acronym = (text: string) => normalize(text).split(" ").filter(Boolean).map((word) => word[0]).join("")
+const acronym = (text: string) =>
+	normalize(text)
+		.split(" ")
+		.filter(Boolean)
+		.map((word) => word[0])
+		.join("")
 
 const fuzzyIncludes = (text: string, query: string) => {
 	let index = 0
@@ -33,13 +41,8 @@ const fuzzyIncludes = (text: string, query: string) => {
 	return query.length === 0
 }
 
-const commandSearchText = (command: AppCommand) => normalize([
-	command.title,
-	command.subtitle,
-	command.scope,
-	command.shortcut,
-	...(command.keywords ?? []),
-].filter(Boolean).join(" "))
+const commandSearchText = (command: AppCommand) =>
+	normalize([command.title, command.subtitle, command.scope, command.shortcut, ...(command.keywords ?? [])].filter(Boolean).join(" "))
 
 const commandScore = (command: AppCommand, query: string) => {
 	const normalizedQuery = normalize(query)
@@ -58,13 +61,16 @@ const commandScore = (command: AppCommand, query: string) => {
 }
 
 export const filterCommands = (commands: readonly AppCommand[], query: string) => {
-	return commands.flatMap((command, index) => {
-		const score = commandScore(command, query)
-		return score === null ? [] : [{ command, index, score }]
-	}).sort((left, right) => {
-		const enabled = Number(commandEnabled(right.command)) - Number(commandEnabled(left.command))
-		return enabled || left.score - right.score || left.index - right.index
-	}).map(({ command }) => command)
+	return commands
+		.flatMap((command, index) => {
+			const score = commandScore(command, query)
+			return score === null ? [] : [{ command, index, score }]
+		})
+		.sort((left, right) => {
+			const enabled = Number(commandEnabled(right.command)) - Number(commandEnabled(left.command))
+			return enabled || left.score - right.score || left.index - right.index
+		})
+		.map(({ command }) => command)
 }
 
 export const clampCommandIndex = (index: number, commands: readonly AppCommand[]) => {

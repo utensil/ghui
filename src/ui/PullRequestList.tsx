@@ -2,7 +2,7 @@ import { TextAttributes } from "@opentui/core"
 import type { LoadStatus, PullRequestItem } from "../domain.js"
 import { daysOpen } from "../date.js"
 import { colors } from "./colors.js"
-import { fitCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
+import { fitCell, MatchedCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
 import { pullRequestRowDisplay, repoColor, repositoryOwner, reviewIcon, shortRepoName } from "./pullRequests.js"
 
 export type PullRequestGroups = Array<[string, PullRequestItem[]]>
@@ -39,26 +39,12 @@ const groupAgeWidth = (pullRequests: readonly PullRequestItem[]) => {
 	return Math.max(4, maxLen + 1)
 }
 
-const MatchedCell = ({ text, width, query, align = "left" }: { text: string; width: number; query: string; align?: "left" | "right" }) => {
-	const fitted = fitCell(text, width, align)
-	const needle = query.trim().toLowerCase()
-	const index = needle.length > 0 ? fitted.toLowerCase().indexOf(needle) : -1
-	if (index < 0) return <span>{fitted}</span>
-
-	const end = Math.min(fitted.length, index + needle.length)
-	return (
-		<>
-			{index > 0 ? <span>{fitted.slice(0, index)}</span> : null}
-			<span fg={colors.accent} attributes={TextAttributes.BOLD}>{fitted.slice(index, end)}</span>
-			{end < fitted.length ? <span>{fitted.slice(end)}</span> : null}
-		</>
-	)
-}
-
 const GroupTitle = ({ label, color, filterText }: { label: string; color: string; filterText: string }) => (
 	<TextLine>
 		<span fg={color}>{GROUP_ICON} </span>
-		<span fg={color} attributes={TextAttributes.BOLD}><MatchedCell text={label} width={label.length} query={filterText} /></span>
+		<span fg={color} attributes={TextAttributes.BOLD}>
+			<MatchedCell text={label} width={label.length} query={filterText} />
+		</span>
 	</TextLine>
 )
 
@@ -81,6 +67,7 @@ export const buildPullRequestListRows = ({
 	loadedCount,
 	hasMore,
 	isLoadingMore,
+	loadingIndicator = "-",
 }: {
 	readonly groups: PullRequestGroups
 	readonly status: LoadStatus
@@ -90,13 +77,15 @@ export const buildPullRequestListRows = ({
 	readonly loadedCount: number
 	readonly hasMore: boolean
 	readonly isLoadingMore: boolean
+	readonly loadingIndicator?: string
 }): readonly PullRequestListRow[] => {
 	const itemCount = groups.reduce((count, [, pullRequests]) => count + pullRequests.length, 0)
 	const rows: PullRequestListRow[] = [{ _tag: "title" }]
 	if (showFilterBar) rows.push({ _tag: "filter" })
 	if (status === "loading" && itemCount === 0) rows.push({ _tag: "message", text: "- Loading pull requests...", color: colors.muted })
 	if (status === "error") rows.push({ _tag: "message", text: `- ${error ?? "Could not load pull requests."}`, color: colors.error })
-	if (status === "ready" && itemCount === 0) rows.push({ _tag: "message", text: filterText.length > 0 ? "- No matching pull requests." : "- No open pull requests.", color: colors.muted })
+	if (status === "ready" && itemCount === 0)
+		rows.push({ _tag: "message", text: filterText.length > 0 ? "- No matching pull requests." : "- No open pull requests.", color: colors.muted })
 	let currentOwner: string | null = null
 	for (const [repository, pullRequests] of groups) {
 		const owner = repositoryOwner(repository)
@@ -108,7 +97,7 @@ export const buildPullRequestListRows = ({
 		for (const pullRequest of pullRequests) rows.push({ _tag: "pull-request", pullRequest, groupPullRequests: pullRequests })
 	}
 	if (status === "ready" && itemCount > 0 && (hasMore || isLoadingMore)) {
-		rows.push({ _tag: "load-more", text: isLoadingMore ? `- Loading more pull requests... (${loadedCount} loaded)` : `- ${loadedCount} loaded, more available` })
+		rows.push({ _tag: "load-more", text: isLoadingMore ? `${loadingIndicator} Loading more pull requests... (${loadedCount} loaded)` : `- ${loadedCount} loaded, more available` })
 	}
 	return rows
 }
@@ -149,9 +138,13 @@ const PullRequestRow = ({
 				<span>{" ".repeat(ITEM_INDENT)}</span>
 				<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
 				<span> </span>
-				<span fg={display.numberFg}><MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" /></span>
+				<span fg={display.numberFg}>
+					<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
+				</span>
 				<span> </span>
-				<span><MatchedCell text={pullRequest.title} width={titleWidth} query={filterText} /></span>
+				<span>
+					<MatchedCell text={pullRequest.title} width={titleWidth} query={filterText} />
+				</span>
 				<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
 				<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
 				{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
@@ -172,6 +165,7 @@ export const PullRequestList = ({
 	loadedCount,
 	hasMore,
 	isLoadingMore,
+	loadingIndicator,
 	onSelectPullRequest,
 }: {
 	groups: PullRequestGroups
@@ -185,9 +179,10 @@ export const PullRequestList = ({
 	loadedCount: number
 	hasMore: boolean
 	isLoadingMore: boolean
+	loadingIndicator: string
 	onSelectPullRequest: (url: string) => void
 }) => {
-	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore })
+	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore, loadingIndicator })
 
 	return (
 		<box width={contentWidth} flexDirection="column">

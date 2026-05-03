@@ -15,7 +15,8 @@
 		"noFallthroughCasesInSwitch": true,
 		"noUncheckedIndexedAccess": true,
 		"skipLibCheck": true,
-		"types": ["bun-types"]
+		"types": ["bun"],
+		"plugins": [{ "name": "@effect/language-service" }]
 	},
-	"include": ["src/**/*.ts", "src/**/*.tsx"]
+	"include": ["src/**/*.ts", "src/**/*.tsx", "dev/**/*.ts", "dev/**/*.tsx"]
 }

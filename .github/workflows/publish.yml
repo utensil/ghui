@@ -27,6 +27,8 @@ jobs:
 
       - run: bun run typecheck
 
+      - run: bun run package:smoke
+
       - name: Verify release tag matches package version
         run: |
           version="$(node -p "require('./package.json').version")"

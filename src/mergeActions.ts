@@ -1,4 +1,4 @@
-import type { PullRequestItem, PullRequestMergeAction, PullRequestMergeInfo } from "./domain.js"
+import type { PullRequestItem, PullRequestMergeAction, PullRequestMergeInfo, PullRequestState } from "./domain.js"
 
 export interface MergeActionDefinition {
 	readonly action: PullRequestMergeAction
@@ -8,6 +8,7 @@ export interface MergeActionDefinition {
 	readonly pastTense: string
 	readonly danger?: boolean
 	readonly refreshOnSuccess?: boolean
+	readonly optimisticState?: PullRequestState
 	readonly optimisticAutoMergeEnabled?: boolean
 	readonly isAvailable: (info: PullRequestMergeInfo) => boolean
 }
@@ -29,6 +30,7 @@ const mergeActionDefinitions = {
 		cliArgs: ["--squash", "--delete-branch"],
 		pastTense: "Merged",
 		refreshOnSuccess: true,
+		optimisticState: "merged",
 		isAvailable: isCleanlyMergeable,
 	},
 	auto: {
@@ -57,6 +59,7 @@ const mergeActionDefinitions = {
 		pastTense: "Admin merged",
 		danger: true,
 		refreshOnSuccess: true,
+		optimisticState: "merged",
 		isAvailable: (info) => info.state === "open" && !info.isDraft && info.mergeable !== "conflicting",
 	},
 } as const satisfies Record<PullRequestMergeAction, MergeActionDefinition>
@@ -68,8 +71,7 @@ export const availableMergeActions = (info: PullRequestMergeInfo | null): readon
 	return mergeActions.filter((action) => action.isAvailable(info))
 }
 
-export const getMergeActionDefinition = (action: PullRequestMergeAction): MergeActionDefinition =>
-	mergeActionDefinitions[action]
+export const getMergeActionDefinition = (action: PullRequestMergeAction): MergeActionDefinition => mergeActionDefinitions[action]
 
 export const mergeInfoFromPullRequest = (pullRequest: PullRequestItem): PullRequestMergeInfo => ({
 	repository: pullRequest.repository,

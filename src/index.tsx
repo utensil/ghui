@@ -3,8 +3,6 @@
 import { addDefaultParsers, createCliRenderer, createTerminalPalette } from "@opentui/core"
 import { RegistryProvider } from "@effect/atom-react"
 import { createRoot } from "@opentui/react"
-import { KeymapProvider } from "@opentui/keymap/react"
-import { createKeymap } from "./keyboard/createKeymap.js"
 
 process.env.OTUI_USE_ALTERNATE_SCREEN = "true"
 
@@ -24,7 +22,10 @@ const FOCUS_REPORTING_DISABLE = "\x1b[?1004l"
 
 const paletteDetector = createTerminalPalette(process.stdin, process.stdout)
 const [terminalColors, { setSystemThemeColors }, { App }] = await Promise.all([
-	paletteDetector.detect({ timeout: 150 }).catch(() => null).finally(() => paletteDetector.cleanup()),
+	paletteDetector
+		.detect({ timeout: 150 })
+		.catch(() => null)
+		.finally(() => paletteDetector.cleanup()),
 	import("./ui/colors.js"),
 	import("./App.js"),
 ])
@@ -45,12 +46,8 @@ const renderer = await createCliRenderer({
 
 process.stdout.write(FOCUS_REPORTING_ENABLE)
 
-const keymap = createKeymap(renderer)
-
 createRoot(renderer).render(
 	<RegistryProvider>
-		<KeymapProvider keymap={keymap}>
-			<App />
-		</KeymapProvider>
+		<App />
 	</RegistryProvider>,
 )

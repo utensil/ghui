@@ -63,4 +63,9 @@ if (command !== undefined) {
 	process.exit(1)
 }
 
-await import("../src/index.tsx")
+const sourceEntry = new URL("../src/index.tsx", import.meta.url)
+if (await Bun.file(sourceEntry).exists()) {
+	await import(sourceEntry.href)
+} else {
+	await import("../dist/index.js")
+}

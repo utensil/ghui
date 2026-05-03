@@ -1,11 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import {
 	buildStackedDiffFiles,
+	diffAnchorOnSide,
+	getDiffCommentAnchors,
 	getStackedDiffCommentAnchors,
+	minimizeWhitespaceDiffFiles,
+	minimizeWhitespacePatch,
 	nearestDiffCommentAnchorIndex,
 	patchRenderableLineCount,
 	scrollTopForVisibleLine,
 	splitPatchFiles,
+	verticalDiffAnchor,
 } from "../src/ui/diff.ts"
 
 const patch = `diff --git a/one.ts b/one.ts
@@ -70,5 +75,145 @@ describe("stacked diff helpers", () => {
 +echo new`)
 
 		expect(file?.filetype).toBe("bash")
+	})
+})
+
+describe("whitespace-minimized diffs", () => {
+	test("drops files that only changed whitespace", () => {
+		const files = splitPatchFiles(`diff --git a/format.ts b/format.ts
+--- a/format.ts
++++ b/format.ts
+@@ -1,3 +1,3 @@
+ export const value = {
+-  name: "ghui",
++	name: "ghui",
+ }
+`)
+
+		expect(minimizeWhitespaceDiffFiles(files)).toEqual([])
+	})
+
+	test("keeps real changes while collapsing whitespace-only pairs to context", () => {
+		const minimized = minimizeWhitespacePatch(`diff --git a/mixed.ts b/mixed.ts
+--- a/mixed.ts
++++ b/mixed.ts
+@@ -1,4 +1,4 @@
+ export const value = {
+-  name: "ghui",
+-  count: 1,
++	name: "ghui",
++	count: 2,
+ }
+`)
+
+		expect(minimized).toContain("@@ -1,4 +1,4 @@")
+		expect(minimized).toContain(' \tname: "ghui"')
+		expect(minimized).not.toContain("-  name")
+		expect(minimized).not.toContain("+\tname")
+		expect(minimized).toContain("-  count: 1,")
+		expect(minimized).toContain("+\tcount: 2,")
+	})
+
+	test("matches repeated whitespace-only changes without hiding nearby edits", () => {
+		const minimized = minimizeWhitespacePatch(`diff --git a/repeated.ts b/repeated.ts
+--- a/repeated.ts
++++ b/repeated.ts
+@@ -1,5 +1,5 @@
+-const value = call(1)
+-const value = call(2)
+-const value = call(3)
++const value=call(1)
++const value=call(20)
++const value=call(3)
+ const done = true
+`)
+
+		expect(minimized).toContain(" const value=call(1)")
+		expect(minimized).toContain("-const value = call(2)")
+		expect(minimized).toContain("+const value=call(20)")
+		expect(minimized).toContain(" const value=call(3)")
+	})
+
+	test("uses bounded matching for large whitespace-only change blocks", () => {
+		const deletions = Array.from({ length: 250 }, (_, index) => `-  const value${index} = call(${index})`).join("\n")
+		const additions = Array.from({ length: 250 }, (_, index) => `+\tconst value${index}=call(${index})`).join("\n")
+		const files = splitPatchFiles(`diff --git a/large.ts b/large.ts
+--- a/large.ts
++++ b/large.ts
+@@ -1,250 +1,250 @@
+${deletions}
+${additions}`)
+
+		expect(minimizeWhitespaceDiffFiles(files)).toEqual([])
+	})
+
+	test("comment anchors are computed from displayed whitespace-minimized patches", () => {
+		const [file] = minimizeWhitespaceDiffFiles(
+			splitPatchFiles(`diff --git a/comments.ts b/comments.ts
+--- a/comments.ts
++++ b/comments.ts
+@@ -10,4 +10,4 @@
+ export const value = {
+-  name: "ghui",
+-  count: 1,
++	name: "ghui",
++	count: 2,
+ }
+`),
+		)
+
+		expect(file).toBeDefined()
+		const anchors = getDiffCommentAnchors(file!)
+
+		expect(anchors.map((anchor) => `${anchor.kind}:${anchor.side}:${anchor.line}:${anchor.text}`)).toEqual([
+			"context:RIGHT:10:export const value = {",
+			'context:RIGHT:11:\tname: "ghui",',
+			"deletion:LEFT:12:  count: 1,",
+			"addition:RIGHT:12:\tcount: 2,",
+			"context:RIGHT:13:}",
+		])
+	})
+
+	test("split navigation preserves a preferred side across right-only context rows", () => {
+		const [file] = minimizeWhitespaceDiffFiles(
+			splitPatchFiles(`diff --git a/nav.ts b/nav.ts
+--- a/nav.ts
++++ b/nav.ts
+@@ -1,6 +1,6 @@
+ export const before = true
+-const oldOne = 1
++const newOne = 1
+-  sameName()
++	sameName()
+-const oldTwo = 2
++const newTwo = 2
+ export const after = true
+`),
+		)
+		const anchors = getDiffCommentAnchors(file!, "split")
+		const firstLeft = anchors.find((anchor) => anchor.text === "const oldOne = 1")!
+		const context = verticalDiffAnchor(anchors, firstLeft, 1, "LEFT")!
+		const secondLeft = verticalDiffAnchor(anchors, context, 1, "LEFT")!
+
+		expect(context).toMatchObject({ kind: "context", side: "RIGHT", text: "\tsameName()" })
+		expect(secondLeft).toMatchObject({ kind: "deletion", side: "LEFT", text: "const oldTwo = 2" })
+	})
+
+	test("split left/right side selection is explicit when a row has both sides", () => {
+		const [file] = splitPatchFiles(`diff --git a/side.ts b/side.ts
+--- a/side.ts
++++ b/side.ts
+@@ -1,2 +1,2 @@
+-const oldValue = 1
++const newValue = 2
+ const unchanged = true
+`)
+		const anchors = getDiffCommentAnchors(file!, "split")
+		const right = anchors.find((anchor) => anchor.side === "RIGHT" && anchor.kind === "addition")!
+		const left = diffAnchorOnSide(anchors, right, "LEFT")!
+		const unchanged = verticalDiffAnchor(anchors, left, 1, "LEFT")!
+
+		expect(left).toMatchObject({ side: "LEFT", kind: "deletion", text: "const oldValue = 1" })
+		expect(diffAnchorOnSide(anchors, unchanged, "LEFT")).toBeNull()
 	})
 })

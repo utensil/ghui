@@ -69,8 +69,7 @@ interface TerminalThemeColors {
 	readonly highlightForeground: string | null
 }
 
-const readableHex = (value: string | null | undefined, fallback: string) =>
-	typeof value === "string" && /^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/.test(value) ? value : fallback
+const readableHex = (value: string | null | undefined, fallback: string) => (typeof value === "string" && /^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/.test(value) ? value : fallback)
 
 const hexToRgb = (hex: string) => {
 	const value = hex.replace(/^#/, "").slice(0, 6)
@@ -87,7 +86,13 @@ const luminance = (hex: string) => {
 }
 
 const rgbToHex = ({ r, g, b }: { readonly r: number; readonly g: number; readonly b: number }) =>
-	`#${[r, g, b].map((component) => Math.max(0, Math.min(255, Math.round(component))).toString(16).padStart(2, "0")).join("")}`
+	`#${[r, g, b]
+		.map((component) =>
+			Math.max(0, Math.min(255, Math.round(component)))
+				.toString(16)
+				.padStart(2, "0"),
+		)
+		.join("")}`
 
 export const mixHex = (base: string, overlay: string, amount: number) => {
 	const from = hexToRgb(base)
@@ -146,13 +151,18 @@ const grayscaleRamp = (background: string) => {
 const mutedTextColor = (background: string) => {
 	const bgLum = luminance(background)
 	const isDark = bgLum < 128
-	const value = isDark
-		? bgLum < 10 ? 180 : Math.min(Math.floor(160 + bgLum * 0.3), 200)
-		: bgLum > 245 ? 75 : Math.max(Math.floor(100 - (255 - bgLum) * 0.2), 60)
+	const value = isDark ? (bgLum < 10 ? 180 : Math.min(Math.floor(160 + bgLum * 0.3), 200)) : bgLum > 245 ? 75 : Math.max(Math.floor(100 - (255 - bgLum) * 0.2), 60)
 	return rgbToHex({ r: value, g: value, b: value })
 }
 
-const contrastText = (background: string) => luminance(background) > 128 ? "#000000" : "#ffffff"
+const contrastText = (background: string) => (luminance(background) > 128 ? "#000000" : "#ffffff")
+
+export const lineNumberTextColor = (background: string, foreground: string) => {
+	const bg = readableHex(background, foreground)
+	const fg = readableHex(foreground, contrastText(bg))
+	const contrast = Math.abs(luminance(bg) - luminance(fg))
+	return mixHex(bg, fg, contrast < 90 ? 0.62 : 0.5)
+}
 
 const ghuiColors: ColorPalette = {
 	background: "#111018",
@@ -793,11 +803,7 @@ export const isThemeId = (value: unknown): value is ThemeId => typeof value === 
 export const filterThemeDefinitions = (query: string) => {
 	const normalized = query.trim().toLowerCase()
 	if (normalized.length === 0) return themeDefinitions
-	return themeDefinitions.filter((theme) =>
-		theme.id.includes(normalized) ||
-		theme.name.toLowerCase().includes(normalized) ||
-		theme.description.toLowerCase().includes(normalized),
-	)
+	return themeDefinitions.filter((theme) => theme.id.includes(normalized) || theme.name.toLowerCase().includes(normalized) || theme.description.toLowerCase().includes(normalized))
 }
 
 export const setActiveTheme = (id: ThemeId) => {

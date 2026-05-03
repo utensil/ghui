@@ -1,6 +1,6 @@
 {
 	"name": "@kitlangton/ghui",
-	"version": "0.1.21",
+	"version": "0.3.3",
 	"description": "Terminal UI for GitHub pull requests",
 	"type": "module",
 	"license": "MIT",
@@ -21,7 +21,7 @@
 	],
 	"files": [
 		"bin",
-		"src",
+		"dist",
 		"README.md",
 		".env.example",
 		"LICENSE"
@@ -35,28 +35,36 @@
 		"ghui": "bin/ghui.js"
 	},
 	"scripts": {
+		"build:cli": "bun run dev/build-cli.ts",
 		"changeset": "npm exec --package @changesets/cli@2.31.0 -- changeset",
 		"changeset:status": "npm exec --package @changesets/cli@2.31.0 -- changeset status",
 		"changeset:version": "npm exec --package @changesets/cli@2.31.0 -- changeset version",
 		"dev": "GHUI_MOTEL_PORT=${GHUI_MOTEL_PORT:-27686} bun --watch bin/ghui.js",
+		"dev:logo": "bun --watch dev/loadingLogo.tsx",
 		"start": "bun run src/index.tsx",
 		"start:mock": "GHUI_MOCK_PR_COUNT=400 GHUI_MOCK_REPO_COUNT=4 bun run src/index.tsx",
 		"test": "bun test test",
 		"typecheck": "tsc --noEmit",
 		"lint": "oxlint --tsconfig tsconfig.json src/ test/",
-		"format": "oxfmt src/ test/",
-		"format:check": "oxfmt --check src/ test/"
+		"format": "oxfmt src/ test/ dev/",
+		"format:check": "oxfmt --check src/ test/ dev/",
+		"package:smoke": "bun run dev/package-smoke.ts",
+		"prepack": "bun run build:cli"
 	},
+	"workspaces": [
+		".",
+		"packages/*"
+	],
 	"dependencies": {
 		"@effect/atom-react": "4.0.0-beta.59",
 		"@opentui/core": "0.2.1",
-		"@opentui/keymap": "0.2.1",
 		"@opentui/react": "0.2.1",
 		"effect": "4.0.0-beta.59",
 		"react": "19.2.5",
 		"scheduler": "0.27.0"
 	},
 	"devDependencies": {
+		"@ghui/keymap": "workspace:*",
 		"@effect/language-service": "0.85.1",
 		"@types/bun": "1.3.12",
 		"@types/react": "19.2.14",

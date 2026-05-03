@@ -11,14 +11,18 @@ export interface CommentEditorLine {
 
 export const clampCursor = (body: string, cursor: number) => Math.max(0, Math.min(cursor, body.length))
 
-export const commentEditorLines = (body: string): readonly CommentEditorLine[] => body.split("\n").reduce<CommentEditorLine[]>((ranges, text) => {
-	const start = ranges.length === 0 ? 0 : ranges[ranges.length - 1]!.end + 1
-	ranges.push({ text, start, end: start + text.length })
-	return ranges
-}, [])
+export const commentEditorLines = (body: string): readonly CommentEditorLine[] =>
+	body.split("\n").reduce<CommentEditorLine[]>((ranges, text) => {
+		const start = ranges.length === 0 ? 0 : ranges[ranges.length - 1]!.end + 1
+		ranges.push({ text, start, end: start + text.length })
+		return ranges
+	}, [])
 
 export const cursorLineIndexForLines = (lines: readonly CommentEditorLine[], cursor: number) =>
-	Math.max(0, lines.findIndex((line, index) => cursor <= line.end || index === lines.length - 1))
+	Math.max(
+		0,
+		lines.findIndex((line, index) => cursor <= line.end || index === lines.length - 1),
+	)
 
 export const cursorLineIndex = (body: string, cursor: number) => {
 	const lines = commentEditorLines(body)

@@ -53,10 +53,10 @@ export const pullRequestQueueLabels = {
 	mentioned: "mentioned",
 } as const satisfies Record<PullRequestQueueMode, string>
 
-export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, author: string, repository: string | null) => {
+export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, repository: string | null) => {
 	const qualifiers = {
-		repository: repository ? `repo:${repository}` : `author:${author}`,
-		authored: `author:${author}`,
+		repository: repository ? `repo:${repository}` : "author:@me",
+		authored: "author:@me",
 		review: "review-requested:@me",
 		assigned: "assignee:@me",
 		mentioned: "mentions:@me",
@@ -119,6 +119,9 @@ export type DiffCommentSide = Schema.Schema.Type<typeof DiffCommentSide>
 
 export type PullRequestMergeAction = "squash" | "auto" | "admin" | "disable-auto"
 
+export const pullRequestReviewEvents = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const
+export type PullRequestReviewEvent = (typeof pullRequestReviewEvents)[number]
+
 export interface CheckItem {
 	readonly name: string
 	readonly status: CheckRunStatus
@@ -137,6 +140,15 @@ export interface CreatePullRequestCommentInput {
 	readonly path: string
 	readonly line: number
 	readonly side: DiffCommentSide
+	readonly startLine?: number
+	readonly startSide?: DiffCommentSide
+	readonly body: string
+}
+
+export interface SubmitPullRequestReviewInput {
+	readonly repository: string
+	readonly number: number
+	readonly event: PullRequestReviewEvent
 	readonly body: string
 }
 
@@ -150,6 +162,17 @@ export interface PullRequestReviewComment {
 	readonly createdAt: Date | null
 	readonly url: string | null
 }
+
+export type PullRequestConversationItem =
+	| {
+			readonly _tag: "comment"
+			readonly id: string
+			readonly author: string
+			readonly body: string
+			readonly createdAt: Date | null
+			readonly url: string | null
+	  }
+	| ({ readonly _tag: "review-comment" } & PullRequestReviewComment)
 
 export interface PullRequestItem {
 	readonly repository: string

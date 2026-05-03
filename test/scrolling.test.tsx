@@ -21,10 +21,8 @@ const loadApp = async () => {
 	const { createTestRenderer } = await import("@opentui/core/testing")
 	const { createRoot } = await import("@opentui/react")
 	const { RegistryProvider } = await import("@effect/atom-react")
-	const { KeymapProvider } = await import("@opentui/keymap/react")
-	const { createKeymap } = await import("../src/keyboard/createKeymap.ts")
 	const { App } = await import("../src/App.tsx")
-	return { createTestRenderer, createRoot, RegistryProvider, createKeymap, KeymapProvider, App }
+	return { createTestRenderer, createRoot, RegistryProvider, App }
 }
 
 let cached: Awaited<ReturnType<typeof loadApp>> | null = null
@@ -41,11 +39,7 @@ const stepFrame = async (renderOnce: () => Promise<void>) => {
 	})
 }
 
-const settle = async (
-	renderOnce: () => Promise<void>,
-	predicate: () => boolean,
-	attempts = 60,
-) => {
+const settle = async (renderOnce: () => Promise<void>, predicate: () => boolean, attempts = 60) => {
 	for (let i = 0; i < attempts; i++) {
 		await stepFrame(renderOnce)
 		if (predicate()) return true
@@ -55,16 +49,13 @@ const settle = async (
 
 const setupApp = async (cols = 100, rows = 20, surface: "pullRequests" | "issues" | "stars" = "pullRequests") => {
 	if (!cached) cached = await loadApp()
-	const { createTestRenderer, createRoot, RegistryProvider, createKeymap, KeymapProvider, App } = cached
+	const { createTestRenderer, createRoot, RegistryProvider, App } = cached
 	const setup = await createTestRenderer({ width: cols, height: rows })
-	const keymap = createKeymap(setup.renderer)
 	const root = createRoot(setup.renderer)
 	act(() => {
 		root.render(
 			<RegistryProvider>
-				<KeymapProvider keymap={keymap}>
-					<App />
-				</KeymapProvider>
+				<App />
 			</RegistryProvider>,
 		)
 	})
@@ -116,7 +107,7 @@ const leftPaneRowOf = (frame: string, prNumber: number) => {
 const press = async (
 	mockInput: { pressArrow: (d: "up" | "down" | "left" | "right") => void; pressKey: (k: string, m?: { shift?: boolean }) => void },
 	renderOnce: () => Promise<void>,
-	key: { kind: "arrow"; dir: "up" | "down" } | { kind: "key"; name: string; shift?: boolean },
+	key: { kind: "arrow"; dir: "up" | "down" | "left" | "right" } | { kind: "key"; name: string; shift?: boolean },
 	settleFrames = 2,
 ) => {
 	await act(async () => {
@@ -168,6 +159,37 @@ describe("PR list scrolling", () => {
 	test("initial selection points at first PR", async () => {
 		const { captureCharFrame, renderer } = await setupApp(100, 20)
 		expect(detailPaneNumber(captureCharFrame())).toBe(numberFromIndex(0))
+		renderer.destroy()
+	})
+
+	test("details show summary and conversation in one document", async () => {
+		const { captureCharFrame, renderOnce, renderer } = await setupApp(120, 24)
+		const loaded = await settle(renderOnce, () => {
+			const frame = captureCharFrame()
+			return frame.includes("Line B") && frame.includes("Conversation") && frame.includes("Top-level discussion")
+		})
+		expect(loaded).toBe(true)
+		const frame = captureCharFrame()
+		expect(frame.indexOf("Line B")).toBeLessThan(frame.indexOf("Conversation"))
+		renderer.destroy()
+	})
+
+	test("diff arrows preserve left/right side preference across minimized context rows", async () => {
+		const { captureCharFrame, mockInput, renderOnce, renderer } = await setupApp(120, 24)
+		await press(mockInput, renderOnce, { kind: "key", name: "d" }, 4)
+		const loaded = await settle(renderOnce, () => captureCharFrame().includes("src/mockDiff.ts"))
+		expect(loaded).toBe(true)
+
+		await press(mockInput, renderOnce, { kind: "arrow", dir: "left" })
+		await press(mockInput, renderOnce, { kind: "arrow", dir: "down" })
+		expect(captureCharFrame()).toContain("← -2")
+
+		await press(mockInput, renderOnce, { kind: "arrow", dir: "down" })
+		await press(mockInput, renderOnce, { kind: "arrow", dir: "down" })
+		expect(captureCharFrame()).toContain("← -4")
+
+		await press(mockInput, renderOnce, { kind: "arrow", dir: "right" })
+		expect(captureCharFrame()).toContain("→ +4")
 		renderer.destroy()
 	})
 

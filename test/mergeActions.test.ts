@@ -19,6 +19,15 @@ describe("mergeActions ordering", () => {
 	test("source-of-truth order is squash, auto, disable-auto, admin", () => {
 		expect(mergeActions.map((action) => action.action)).toEqual(["squash", "auto", "disable-auto", "admin"])
 	})
+
+	test("source-of-truth optimistic UI effects match action behavior", () => {
+		expect(Object.fromEntries(mergeActions.map((action) => [action.action, action.optimisticState ?? action.optimisticAutoMergeEnabled ?? null]))).toEqual({
+			squash: "merged",
+			auto: true,
+			"disable-auto": false,
+			admin: "merged",
+		})
+	})
 })
 
 describe("availableMergeActions", () => {
