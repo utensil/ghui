@@ -3028,7 +3028,7 @@ export const App = () => {
 			toggleDiffRenderView: () => setDiffRenderView((current) => current === "unified" ? "split" : "unified"),
 			toggleDiffWrapMode: () => setDiffWrapMode((current) => current === "none" ? "word" : "none"),
 			jumpDiffFile,
-			toggleDiffCommentMode: () => {
+			toggleDiffCommentRange: () => {
 				if (diffCommentMode) setDiffCommentMode(false)
 				else enterDiffCommentMode()
 			},
@@ -3616,6 +3616,7 @@ export const App = () => {
 		loadedCount: loadedPullRequestCount,
 		hasMore: hasMorePullRequests,
 		isLoadingMore: isLoadingMorePullRequests,
+		loadingIndicator,
 		onSelectPullRequest: selectPullRequestByUrl,
 	} as const
 	const issueListProps = {
@@ -3725,7 +3726,6 @@ export const App = () => {
 					loadingIndicator={loadingIndicator}
 					scrollRef={diffScrollRef}
 					setDiffRef={setDiffRenderableRef}
-					commentMode={diffCommentMode}
 					selectedCommentAnchor={selectedDiffCommentAnchor}
 					selectedCommentThread={selectedDiffCommentThread}
 					onSelectCommentLine={selectDiffCommentLine}
@@ -4037,6 +4037,8 @@ export const App = () => {
 					modalHeight={commandPaletteHeight}
 					offsetLeft={commandPaletteLeft}
 					offsetTop={commandPaletteTop}
+					onSelectCommandIndex={setSelectedCommandIndex}
+					onRunCommand={(command) => runCommandByIdRef.current(command.id)}
 				/>
 			) : null}
 		</box>

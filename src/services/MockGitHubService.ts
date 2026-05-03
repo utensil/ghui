@@ -312,6 +312,7 @@ export const MockGitHubService = {
 					createdAt: new Date(),
 					url: null,
 				} satisfies PullRequestReviewComment),
+				submitPullRequestReview: () => Effect.void,
 				toggleDraftStatus: () => Effect.void,
 				listRepoLabels: () => Effect.succeed([]),
 				addPullRequestLabel: () => Effect.void,

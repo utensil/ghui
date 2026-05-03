@@ -969,7 +969,7 @@ export class GitHubService extends Context.Service<
 					const response: SearchResponse<Item["Type"]> = yield* command.runSchema(responseSchema, "gh", [
 						"api", "graphql",
 						"-f", `query=${query}`,
-						"-F", `searchQuery=${issueSearch(input.mode, config.author, input.repository)}`,
+						"-F", `searchQuery=${issueSearch(input.mode, "@me", input.repository)}`,
 						"-F", `first=${input.pageSize}`,
 						...(input.cursor ? ["-F", `after=${input.cursor}`] : []),
 					])
