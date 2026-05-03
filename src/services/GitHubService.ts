@@ -251,6 +251,10 @@ const PullRequestCommitsResponseSchema = Schema.Union([
 	Schema.Array(Schema.Array(PullRequestCommitSchema)),
 ])
 
+const CommitDetailResponseSchema = Schema.Struct({
+	files: Schema.optionalKey(Schema.Array(PullRequestFileSchema)),
+})
+
 const RestRepositorySchema = Schema.Struct({
 	full_name: Schema.String,
 	description: OptionalNullableString,
@@ -1230,8 +1234,8 @@ export class GitHubService extends Context.Service<
 				]).pipe(Effect.map(parsePullRequestCommits))
 
 			const getCommitDiff = (repository: string, sha: string) =>
-				ghJson("getCommitDiff", PullRequestFilesResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/commits/${sha}/files`]).pipe(
-					Effect.map((response) => pullRequestFilesToPatch(parsePullRequestFiles(response))),
+				ghJson("getCommitDiff", CommitDetailResponseSchema, ["api", `repos/${repository}/commits/${sha}`]).pipe(
+					Effect.map((response) => pullRequestFilesToPatch(response.files ?? [])),
 				)
 
 			const getPullRequestDiff = (repository: string, number: number) =>
