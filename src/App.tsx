@@ -3586,6 +3586,7 @@ export const App = () => {
 			alignAnchor: alignSelectedDiffCommentAnchor,
 			selectSide: selectDiffCommentSide,
 			openChangedFiles: () => runCommandById("diff.changed-files"),
+			openCommits: () => openCommitListModal(),
 			openSubmitReview: () => runCommandById("pull.submit-review"),
 			nextFile: () => runCommandById("diff.next-file"),
 			previousFile: () => runCommandById("diff.previous-file"),
