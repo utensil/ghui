@@ -1225,7 +1225,8 @@ export class GitHubService extends Context.Service<
 
 			const listPullRequestCommits = (repository: string, number: number) =>
 				ghJson("listPullRequestCommits", PullRequestCommitsResponseSchema, [
-					"api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/commits`, "-f", "per_page=100",
+					"api", "--method", "GET", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/commits`,
+					"-f", "per_page=100",
 				]).pipe(Effect.map(parsePullRequestCommits))
 
 			const getCommitDiff = (repository: string, sha: string) =>
