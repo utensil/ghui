@@ -1122,6 +1122,7 @@ export const App = () => {
 	const wideBodyHeight = Math.max(8, terminalHeight - 4)
 	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const commitDiffReturnToDetailRef = useRef(false)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
 	const refreshGenerationRef = useRef(0)
@@ -2372,6 +2373,7 @@ export const App = () => {
 	const openCommitDiff = () => {
 		const commit = commitListModal.commits[commitListModal.selectedIndex]
 		if (!commit || !selectedPullRequest) return
+		commitDiffReturnToDetailRef.current = detailFullView
 		closeActiveModal()
 		diffRenderableRefs.current.clear()
 		diffCommentLineColorsRef.current = { contextKey: null, entries: [] }
@@ -3241,6 +3243,10 @@ export const App = () => {
 			closeDiffView: () => {
 				setDiffFullView(false)
 				setDiffCommentMode(false)
+				if (commitDiffReturnToDetailRef.current) {
+					commitDiffReturnToDetailRef.current = false
+					setDetailFullView(true)
+				}
 			},
 			reloadDiff: () => {
 				if (!selectedPullRequest) return
