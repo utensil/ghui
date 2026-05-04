@@ -1,10 +1,11 @@
 import { Context, Effect, Layer } from "effect"
-import type { AuxiliaryItem, IssueItem, PullRequestItem } from "../domain.js"
+import type { AuxiliaryItem, CommitItem, IssueItem, PullRequestItem } from "../domain.js"
 import { CommandRunner, type CommandError } from "./CommandRunner.js"
 
 export class BrowserOpener extends Context.Service<BrowserOpener, {
 	readonly openPullRequest: (pullRequest: PullRequestItem) => Effect.Effect<void, CommandError>
 	readonly openIssue: (issue: IssueItem) => Effect.Effect<void, CommandError>
+	readonly openCommit: (commit: CommitItem) => Effect.Effect<void, CommandError>
 	readonly openAuxiliaryItem: (item: AuxiliaryItem) => Effect.Effect<void, CommandError>
 }>()("ghui/BrowserOpener") {
 	static readonly layerNoDeps = Layer.effect(
@@ -18,6 +19,17 @@ export class BrowserOpener extends Context.Service<BrowserOpener, {
 
 			const openIssue = Effect.fn("BrowserOpener.openIssue")(function*(issue: IssueItem) {
 				yield* command.run("gh", ["issue", "view", String(issue.number), "--repo", issue.repository, "--web"])
+			})
+
+			const openCommit = Effect.fn("BrowserOpener.openCommit")(function*(commit: CommitItem) {
+				const url = commit.url
+				if (process.platform === "darwin") {
+					yield* command.run("open", [url])
+				} else if (process.platform === "win32") {
+					yield* command.run("cmd", ["/c", "start", "", url])
+				} else {
+					yield* command.run("xdg-open", [url])
+				}
 			})
 
 			const openAuxiliaryItem = Effect.fn("BrowserOpener.openAuxiliaryItem")(function*(item: AuxiliaryItem) {
@@ -39,7 +51,7 @@ export class BrowserOpener extends Context.Service<BrowserOpener, {
 				}
 			})
 
-			return BrowserOpener.of({ openPullRequest, openIssue, openAuxiliaryItem })
+			return BrowserOpener.of({ openPullRequest, openIssue, openCommit, openAuxiliaryItem })
 		}),
 	)
 

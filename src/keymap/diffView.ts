@@ -19,6 +19,7 @@ export interface DiffViewCtx {
 	readonly alignAnchor: (align: DiffAlign) => void
 	readonly selectSide: (side: DiffSide) => void
 	readonly openChangedFiles: () => void
+	readonly openCommits: () => void
 	readonly openSubmitReview: () => void
 	readonly nextFile: () => void
 	readonly previousFile: () => void
@@ -78,6 +79,7 @@ export const diffViewKeymap = Diff(
 
 	// File nav
 	{ id: "diff.changed-files", title: "Changed files", keys: ["f"], run: (s) => s.openChangedFiles() },
+	{ id: "diff.commits", title: "View commits", keys: ["c"], run: (s) => s.openCommits() },
 	{ id: "diff.next-file", title: "Next file", keys: ["]"], run: (s) => s.nextFile() },
 	{ id: "diff.previous-file", title: "Previous file", keys: ["["], run: (s) => s.previousFile() },
 	{ id: "diff.submit-review", title: "Review pull request", keys: ["shift+r"], run: (s) => s.openSubmitReview() },

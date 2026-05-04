@@ -224,6 +224,15 @@ export interface IssueItem {
 	readonly timeline: readonly IssueComment[]
 }
 
+export interface CommitItem {
+	readonly oid: string
+	readonly messageHeadline: string
+	readonly messageBody: string
+	readonly author: string
+	readonly committedDate: Date
+	readonly url: string
+}
+
 export interface PullRequestPage {
 	readonly items: readonly PullRequestItem[]
 	readonly endCursor: string | null

@@ -54,11 +54,11 @@ const diffCommentModeHints: readonly HintItem[] = [
 
 const diffViewHints: readonly HintItem[] = [
 	{ key: "esc", label: "back" },
+	{ key: "c", label: "commits" },
+	{ key: "f", label: "files" },
+	{ key: "[]", label: "prev/next" },
 	{ key: "v", label: "view" },
 	{ key: "w", label: "wrap" },
-	{ key: "c", label: "comment" },
-	{ key: "[]", label: "files" },
-	{ key: "r", label: "reload" },
 	{ key: "o", label: "open" },
 	{ key: "q", label: "quit" },
 ]
@@ -77,12 +77,11 @@ const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "c", label: "comment", when: ctx.canCommentSelection ?? false },
 	{ key: "s", label: "state", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "d", label: "diff", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
+	{ key: "c", label: "commits", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "l", label: "labels", when: isQueueSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "m", label: "merge", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 	{ key: "x", label: manageHintLabel(ctx), when: ctx.hasSelection && (ctx.canCloseSelection || (ctx.canManageSelection ?? false)) },
-	{ key: "u", label: "reopen", when: ctx.hasSelection && (ctx.canReopenSelection ?? false) },
 	{ key: "o", label: "open" },
-	{ key: "y", label: "copy" },
 	{ key: "q", label: "quit" },
 ]
 
@@ -102,14 +101,12 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		{ key: "r", label: "retry", when: ctx.hasError },
 		{ key: "tab", label: "queue", when: isQueueSurface(ctx.surface) },
 		{ key: surfaceShortcutHint, label: "surface" },
-		{ key: "c", label: "comment", when: ctx.canCommentSelection ?? false },
 		{ key: "d", label: "diff", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
+		{ key: "c", label: "commits", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 		{ key: "l", label: "labels", when: isQueueSurface(ctx.surface) && ctx.hasSelection },
 		{ key: "m", label: "merge", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 		{ key: "x", label: manageHintLabel(ctx), when: ctx.hasSelection && (ctx.canCloseSelection || (ctx.canManageSelection ?? false)) },
-		{ key: "u", label: "reopen", when: ctx.hasSelection && (ctx.canReopenSelection ?? false) },
 		{ key: "o", label: "open", when: ctx.hasSelection },
-		{ key: "y", label: "copy", when: ctx.hasSelection },
 		{ key: "ctrl-p", label: "commands" },
 	]
 }

@@ -23,6 +23,7 @@ import {
 	type PullRequestQueueMode,
 	type PullRequestReviewComment,
 	type ReviewStatus,
+	type CommitItem,
 	type SubmitPullRequestReviewInput,
 } from "../domain.js"
 import { getMergeActionDefinition } from "../mergeActions.js"
@@ -231,6 +232,28 @@ const IssueCommentsResponseSchema = Schema.Union([
 	Schema.Array(IssueCommentSchema),
 	Schema.Array(Schema.Array(IssueCommentSchema)),
 ])
+
+const PullRequestCommitSchema = Schema.Struct({
+	sha: Schema.String,
+	commit: Schema.Struct({
+		message: Schema.String,
+		author: Schema.NullOr(Schema.Struct({
+			name: OptionalNullableString,
+			date: OptionalNullableString,
+		})),
+	}),
+	html_url: OptionalNullableString,
+	author: Schema.optionalKey(Schema.NullOr(Schema.Struct({ login: OptionalNullableString }))),
+})
+
+const PullRequestCommitsResponseSchema = Schema.Union([
+	Schema.Array(PullRequestCommitSchema),
+	Schema.Array(Schema.Array(PullRequestCommitSchema)),
+])
+
+const CommitDetailResponseSchema = Schema.Struct({
+	files: Schema.optionalKey(Schema.Array(PullRequestFileSchema)),
+})
 
 const RestRepositorySchema = Schema.Struct({
 	full_name: Schema.String,
@@ -849,6 +872,19 @@ const parseDiscussionItem = (repository: string, discussion: RawDiscussionNode):
 const parsePullRequestFiles = (response: Schema.Schema.Type<typeof PullRequestFilesResponseSchema>): readonly RawPullRequestFile[] =>
 	flattenSlurpedPages(response)
 
+const parsePullRequestCommits = (response: Schema.Schema.Type<typeof PullRequestCommitsResponseSchema>): readonly CommitItem[] =>
+	flattenSlurpedPages(response).map((raw) => {
+		const messageParts = raw.commit.message.split("\n")
+		return {
+			oid: raw.sha,
+			messageHeadline: messageParts[0] ?? "",
+			messageBody: messageParts.slice(2).join("\n"),
+			author: raw.author?.login ?? raw.commit.author?.name ?? "unknown",
+			committedDate: raw.commit.author?.date ? new Date(raw.commit.author.date) : new Date(),
+			url: raw.html_url ?? `https://github.com/commit/${raw.sha}`,
+		}
+	})
+
 const diffPath = (path: string) => (/\s|"/.test(path) ? JSON.stringify(path) : path)
 
 const prefixedDiffPath = (prefix: "a" | "b", path: string) => diffPath(`${prefix}/${path}`)
@@ -919,6 +955,8 @@ export class GitHubService extends Context.Service<
 		readonly listSharedRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
 		readonly listWatchedRepositories: () => Effect.Effect<readonly AuxiliaryItem[], GitHubError>
 		readonly unwatchRepository: (repository: string) => Effect.Effect<void, CommandError>
+		readonly listPullRequestCommits: (repository: string, number: number) => Effect.Effect<readonly CommitItem[], GitHubError>
+		readonly getCommitDiff: (repository: string, sha: string) => Effect.Effect<string, GitHubError>
 		readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
 		readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
 		readonly listPullRequestConversation: (repository: string, number: number) => Effect.Effect<readonly PullRequestConversationItem[], GitHubError>
@@ -1189,6 +1227,17 @@ export class GitHubService extends Context.Service<
 			const unwatchRepository = (repository: string) =>
 				ghVoid("unwatchRepository", ["api", "--method", "DELETE", `repos/${repository}/subscription`])
 
+			const listPullRequestCommits = (repository: string, number: number) =>
+				ghJson("listPullRequestCommits", PullRequestCommitsResponseSchema, [
+					"api", "--method", "GET", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/commits`,
+					"-f", "per_page=100",
+				]).pipe(Effect.map(parsePullRequestCommits))
+
+			const getCommitDiff = (repository: string, sha: string) =>
+				ghJson("getCommitDiff", CommitDetailResponseSchema, ["api", `repos/${repository}/commits/${sha}`]).pipe(
+					Effect.map((response) => pullRequestFilesToPatch(response.files ?? [])),
+				)
+
 			const getPullRequestDiff = (repository: string, number: number) =>
 				ghJson("getPullRequestDiff", PullRequestFilesResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/files`]).pipe(
 					Effect.map((response) => pullRequestFilesToPatch(parsePullRequestFiles(response))),
@@ -1326,6 +1375,8 @@ export class GitHubService extends Context.Service<
 				listSharedRepositories,
 				listWatchedRepositories,
 				unwatchRepository,
+				listPullRequestCommits,
+				getCommitDiff,
 				getPullRequestDiff,
 				listPullRequestComments,
 				listPullRequestConversation,

@@ -37,7 +37,7 @@ import { ISSUE_BODY_SCROLL_LIMIT, IssueDetailBody, IssueDetailHeader, IssueDetai
 import { buildIssueListRows, issueListRowIndex, IssueList } from "./ui/IssueList.js"
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
 import { CommandPalette } from "./ui/CommandPalette.js"
-import { ChangedFilesModal, CloseModal, CommentModal, CommentThreadModal, ConfirmActionModal, filterChangedFiles, filterLabels, initialChangedFilesModalState, initialCloseModalState, initialCommandPaletteState, initialCommentModalState, initialCommentThreadModalState, initialConfirmActionModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialSubmitReviewModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, submitReviewOptions, SubmitReviewModal, ThemeModal, type ChangedFilesModalState, type CloseModalState, type CommandPaletteState, type CommentModalState, type CommentThreadModalState, type ConfirmActionModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type SubmitReviewModalState, type ThemeModalState } from "./ui/modals.js"
+import { ChangedFilesModal, CloseModal, CommitListModal, CommentModal, CommentThreadModal, ConfirmActionModal, filterChangedFiles, filterLabels, initialChangedFilesModalState, initialCloseModalState, initialCommandPaletteState, initialCommitListModalState, initialCommentModalState, initialCommentThreadModalState, initialConfirmActionModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialSubmitReviewModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, submitReviewOptions, SubmitReviewModal, ThemeModal, type ChangedFilesModalState, type CloseModalState, type CommandPaletteState, type CommitListModalState, type CommentModalState, type CommentThreadModalState, type ConfirmActionModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type SubmitReviewModalState, type ThemeModalState } from "./ui/modals.js"
 import { groupBy, repositoryOwner, reviewLabel } from "./ui/pullRequests.js"
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
@@ -680,6 +680,12 @@ const pullRequestDiffAtom = Atom.family((key: string) => {
 	const { repository, number } = parsePullRequestDiffAtomKey(key)
 	return githubRuntime.atom(GitHubService.use((github) => github.getPullRequestDiff(repository, number)))
 })
+const listPullRequestCommitsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listPullRequestCommits(input.repository, input.number))
+)
+const getCommitDiffAtom = githubRuntime.fn<{ readonly repository: string; readonly sha: string }>()((input) =>
+	GitHubService.use((github) => github.getCommitDiff(input.repository, input.sha))
+)
 const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestComments(input.repository, input.number))
 )
@@ -1021,6 +1027,7 @@ export const App = () => {
 	const themeModalActive = Modal.$is("Theme")(activeModal)
 	const commandPaletteActive = Modal.$is("CommandPalette")(activeModal)
 	const openRepositoryModalActive = Modal.$is("OpenRepository")(activeModal)
+	const commitListModalActive = Modal.$is("CommitList")(activeModal)
 	const labelModal: LabelModalState = labelModalActive ? activeModal : initialLabelModalState
 	const closeModal: CloseModalState = closeModalActive ? activeModal : initialCloseModalState
 	const confirmActionModal: ConfirmActionModalState = confirmActionModalActive ? activeModal : initialConfirmActionModalState
@@ -1032,6 +1039,7 @@ export const App = () => {
 	const themeModal: ThemeModalState = themeModalActive ? activeModal : initialThemeModalState
 	const commandPalette: CommandPaletteState = commandPaletteActive ? activeModal : initialCommandPaletteState
 	const openRepositoryModal: OpenRepositoryModalState = openRepositoryModalActive ? activeModal : initialOpenRepositoryModalState
+	const commitListModal: CommitListModalState = commitListModalActive ? activeModal : initialCommitListModalState
 	const makeModalSetter = <Tag extends Exclude<ModalTag, "None">>(tag: Tag) =>
 		(next: ModalState<Tag> | ((prev: ModalState<Tag>) => ModalState<Tag>)) => setActiveModal((current) => {
 			const ctor = Modal[tag] as unknown as (args: ModalState<Tag>) => Modal
@@ -1053,6 +1061,7 @@ export const App = () => {
 	const setThemeModal = makeModalSetter("Theme")
 	const setCommandPalette = makeModalSetter("CommandPalette")
 	const setOpenRepositoryModal = makeModalSetter("OpenRepository")
+	const setCommitListModal = makeModalSetter("CommitList")
 	setActiveTheme(themeId)
 	const themeIdRef = useRef(themeId)
 	const themeModalRef = useRef(themeModal)
@@ -1113,6 +1122,7 @@ export const App = () => {
 	const wideBodyHeight = Math.max(8, terminalHeight - 4)
 	const noticeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const diffPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+	const commitDiffReturnToDetailRef = useRef(false)
 	const detailPrefetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 	const detailHydrationRef = useRef(new Map<string, DetailHydration>())
 	const refreshGenerationRef = useRef(0)
@@ -2344,6 +2354,61 @@ export const App = () => {
 		})
 	}
 
+	const loadPullRequestCommits = useAtomSet(listPullRequestCommitsAtom, { mode: "promise" })
+	const loadCommitDiff = useAtomSet(getCommitDiffAtom, { mode: "promise" })
+
+	const openCommitListModal = () => {
+		if (!selectedPullRequest) return
+		setCommitListModal({ selectedIndex: 0, commits: [], loading: true })
+		void loadPullRequestCommits({ repository: selectedPullRequest.repository, number: selectedPullRequest.number })
+			.then((commits) => {
+				setCommitListModal((current) => ({ ...current, commits, loading: false }))
+			})
+			.catch((error) => {
+				setCommitListModal((current) => ({ ...current, loading: false }))
+				flashNotice(errorMessage(error))
+			})
+	}
+
+	const openCommitDiff = () => {
+		const commit = commitListModal.commits[commitListModal.selectedIndex]
+		if (!commit || !selectedPullRequest) return
+		commitDiffReturnToDetailRef.current = detailFullView
+		closeActiveModal()
+		diffRenderableRefs.current.clear()
+		diffCommentLineColorsRef.current = { contextKey: null, entries: [] }
+		setDiffFullView(true)
+		setDetailFullView(false)
+		setDiffCommentMode(false)
+		setDiffFileIndex(0)
+		setDiffScrollTop(0)
+		setDiffRenderView(contentWidth >= 100 ? "split" : "unified")
+		diffScrollRef.current?.scrollTo({ x: 0, y: 0 })
+		const key = pullRequestDiffKey(selectedPullRequest)
+		setPullRequestDiffCache((current) => ({ ...current, [key]: PullRequestDiffState.Loading() }))
+		void loadCommitDiff({ repository: selectedPullRequest.repository, sha: commit.oid })
+			.then((patch) => {
+				setPullRequestDiffCache((current) => ({
+					...current,
+					[key]: PullRequestDiffState.Ready({ patch, files: splitPatchFiles(patch) }),
+				}))
+			})
+			.catch((error) => {
+				setPullRequestDiffCache((current) => ({
+					...current,
+					[key]: PullRequestDiffState.Error({ error: errorMessage(error) }),
+				}))
+			})
+	}
+
+	const openCommitInBrowser = () => {
+		const commit = commitListModal.commits[commitListModal.selectedIndex]
+		if (!commit) return
+		void Effect.runPromise(BrowserOpener.use((browser) => browser.openCommit(commit)).pipe(
+			Effect.provide(BrowserOpener.layer),
+		)).catch((error) => flashNotice(errorMessage(error)))
+	}
+
 	const selectChangedFile = () => {
 		const selectedIndex = changedFileResults.length === 0 ? 0 : Math.max(0, Math.min(changedFilesModal.selectedIndex, changedFileResults.length - 1))
 		const entry = changedFileResults[selectedIndex]
@@ -3178,6 +3243,10 @@ export const App = () => {
 			closeDiffView: () => {
 				setDiffFullView(false)
 				setDiffCommentMode(false)
+				if (commitDiffReturnToDetailRef.current) {
+					commitDiffReturnToDetailRef.current = false
+					setDetailFullView(true)
+				}
 			},
 			reloadDiff: () => {
 				if (!selectedPullRequest) return
@@ -3208,6 +3277,7 @@ export const App = () => {
 			openLabelModal,
 			openMergeModal,
 			openCloseModal,
+			openCommitList: openCommitListModal,
 			openIssueCommentModal,
 			reopenIssue: openReopenIssueModal,
 			openPullRequestInBrowser: () => {
@@ -3394,6 +3464,7 @@ export const App = () => {
 	}
 
 	const appCtx: AppCtx = {
+		commitListModalActive,
 		closeModalActive,
 		confirmActionModalActive,
 		mergeModalActive,
@@ -3409,6 +3480,19 @@ export const App = () => {
 		diffFullView,
 		detailFullView,
 		textInputActive: commentModalActive || commandPaletteActive || openRepositoryModalActive || changedFilesModalActive || submitReviewModalActive || labelModalActive || filterMode || (themeModalActive && themeModal.filterMode),
+		commitListModal: {
+			stepUp: () => setCommitListModal((current) => ({
+				...current,
+				selectedIndex: current.commits.length === 0 ? 0 : Math.max(0, current.selectedIndex - 1),
+			})),
+			stepDown: () => setCommitListModal((current) => ({
+				...current,
+				selectedIndex: current.commits.length === 0 ? 0 : Math.min(current.commits.length - 1, current.selectedIndex + 1),
+			})),
+			openCommitDiff,
+			openInBrowser: openCommitInBrowser,
+			close: closeActiveModal,
+		},
 		closeModal: { closeModal: closeActiveModal, confirmClose: confirmCloseTarget },
 		confirmActionModal: { closeModal: closeActiveModal, confirmClose: confirmAuxiliaryAction },
 		mergeModal: {
@@ -3508,6 +3592,7 @@ export const App = () => {
 			alignAnchor: alignSelectedDiffCommentAnchor,
 			selectSide: selectDiffCommentSide,
 			openChangedFiles: () => runCommandById("diff.changed-files"),
+			openCommits: () => openCommitListModal(),
 			openSubmitReview: () => runCommandById("pull.submit-review"),
 			nextFile: () => runCommandById("diff.next-file"),
 			previousFile: () => runCommandById("diff.previous-file"),
@@ -3527,6 +3612,7 @@ export const App = () => {
 			toggleDraft: () => { if (activeSurfaceRef.current === "pullRequests") runCommandById("pull.toggle-draft") },
 			refresh: () => runCommandById(activeRefreshCommand()),
 			openInBrowser: () => runCommandById(activeOpenBrowserCommand()),
+			openCommits: () => { if (activeSurfaceRef.current === "pullRequests") openCommitListModal() },
 			copyMetadata: () => runCommandById(activeCopyCommand()),
 		},
 		listNav: {
@@ -3731,6 +3817,10 @@ export const App = () => {
 	const changedFilesModalHeight = Math.min(22, terminalHeight - 4)
 	const changedFilesModalLeft = centeredOffset(contentWidth, changedFilesModalWidth)
 	const changedFilesModalTop = centeredOffset(terminalHeight, changedFilesModalHeight)
+	const commitListModalWidth = Math.min(88, contentWidth - 4)
+	const commitListModalHeight = Math.min(24, terminalHeight - 4)
+	const commitListModalLeft = centeredOffset(contentWidth, commitListModalWidth)
+	const commitListModalTop = centeredOffset(terminalHeight, commitListModalHeight)
 	const sizedModal = (minW: number, maxW: number, padX: number, maxH: number) => {
 		const w = Math.min(maxW, Math.max(minW, contentWidth - padX))
 		const h = Math.min(maxH, terminalHeight - 4)
@@ -4139,6 +4229,15 @@ export const App = () => {
 					modalHeight={openRepositoryModalHeight}
 					offsetLeft={openRepositoryModalLeft}
 					offsetTop={openRepositoryModalTop}
+				/>
+			) : null}
+			{commitListModalActive ? (
+				<CommitListModal
+					state={commitListModal}
+					modalWidth={commitListModalWidth}
+					modalHeight={commitListModalHeight}
+					offsetLeft={commitListModalLeft}
+					offsetTop={commitListModalTop}
 				/>
 			) : null}
 			{commandPaletteActive ? (

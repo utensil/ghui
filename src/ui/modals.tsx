@@ -1,6 +1,6 @@
 import { TextAttributes } from "@opentui/core"
 import { Data } from "effect"
-import type { AuxiliaryItemAction, PullRequestLabel, PullRequestMergeInfo, PullRequestReviewComment, PullRequestReviewEvent } from "../domain.js"
+import type { AuxiliaryItemAction, CommitItem, PullRequestLabel, PullRequestMergeInfo, PullRequestReviewComment, PullRequestReviewEvent } from "../domain.js"
 import { availableMergeActions } from "../mergeActions.js"
 import { clampCursor, commentEditorLines, cursorLineIndexForLines } from "./commentEditor.js"
 import { colors, filterThemeDefinitions, themeDefinitions, type ThemeId } from "./colors.js"
@@ -100,6 +100,12 @@ export interface ThemeModalState {
 export interface CommandPaletteState {
 	readonly query: string
 	readonly selectedIndex: number
+}
+
+export interface CommitListModalState {
+	readonly selectedIndex: number
+	readonly commits: readonly CommitItem[]
+	readonly loading: boolean
 }
 
 export interface OpenRepositoryModalState {
@@ -376,6 +382,12 @@ export const initialOpenRepositoryModalState: OpenRepositoryModalState = {
 	error: null,
 }
 
+export const initialCommitListModalState: CommitListModalState = {
+	selectedIndex: 0,
+	commits: [],
+	loading: false,
+}
+
 export type Modal = Data.TaggedEnum<{
 	None: {}
 	Label: LabelModalState
@@ -389,6 +401,7 @@ export type Modal = Data.TaggedEnum<{
 	Theme: ThemeModalState
 	CommandPalette: CommandPaletteState
 	OpenRepository: OpenRepositoryModalState
+	CommitList: CommitListModalState
 }>
 
 export const Modal = Data.taggedEnum<Modal>()
@@ -409,6 +422,7 @@ export const modalInitialStates = {
 	Theme: initialThemeModalState,
 	CommandPalette: initialCommandPaletteState,
 	OpenRepository: initialOpenRepositoryModalState,
+	CommitList: initialCommitListModalState,
 } as const satisfies { [Tag in Exclude<ModalTag, "None">]: ModalState<Tag> }
 
 export const OpenRepositoryModal = ({
@@ -1157,6 +1171,99 @@ export const ThemeModal = ({
 							<span bg={theme.colors.status.passing}> </span>
 							<span bg={theme.colors.status.failing}> </span>
 							<span bg={theme.colors.status.review}> </span>
+						</TextLine>
+					)
+				})
+			)}
+		</StandardModal>
+	)
+}
+
+const commitTimeAgo = (date: Date) => {
+	const ageMs = Date.now() - date.getTime()
+	const minuteMs = 60_000
+	const hourMs = 60 * minuteMs
+	const dayMs = 24 * hourMs
+	if (ageMs < minuteMs) return "just now"
+	if (ageMs < hourMs) return `${Math.max(1, Math.floor(ageMs / minuteMs))}m ago`
+	if (ageMs < dayMs) return `${Math.max(1, Math.floor(ageMs / hourMs))}h ago`
+	if (ageMs < 30 * dayMs) return `${Math.max(1, Math.floor(ageMs / dayMs))}d ago`
+	return date.toLocaleDateString("en-US", { month: "short", day: "numeric" })
+}
+
+export const CommitListModal = ({
+	state,
+	modalWidth,
+	modalHeight,
+	offsetLeft,
+	offsetTop,
+}: {
+	state: CommitListModalState
+	modalWidth: number
+	modalHeight: number
+	offsetLeft: number
+	offsetTop: number
+}) => {
+	const { contentWidth, bodyHeight: maxVisible } = standardModalDims(modalWidth, modalHeight)
+	const { commits, selectedIndex, loading } = state
+	const clampedIndex = commits.length === 0 ? 0 : Math.max(0, Math.min(selectedIndex, commits.length - 1))
+	const scrollStart = Math.min(Math.max(0, commits.length - maxVisible), Math.max(0, clampedIndex - maxVisible + 1))
+	const visibleCommits = commits.slice(scrollStart, scrollStart + maxVisible)
+	const title = `Commits (${commits.length})`
+	const messageTopRows = Math.max(0, Math.floor((maxVisible - 1) / 2))
+	const messageBottomRows = Math.max(0, maxVisible - messageTopRows - 1)
+
+	return (
+		<StandardModal
+			left={offsetLeft}
+			top={offsetTop}
+			width={modalWidth}
+			height={modalHeight}
+			title={title}
+			subtitle={null}
+			footer={
+				<HintRow
+					items={[
+						{ key: "↑↓", label: "move" },
+						{ key: "d", label: "diff" },
+						{ key: "o", label: "open" },
+						{ key: "esc", label: "close" },
+					]}
+				/>
+			}
+		>
+			{loading ? (
+				<>
+					<Filler rows={messageTopRows} prefix="top" />
+					<PlainLine text={centerCell("Loading commits…", contentWidth)} fg={colors.muted} />
+					<Filler rows={messageBottomRows} prefix="bottom" />
+				</>
+			) : visibleCommits.length === 0 ? (
+				<>
+					<Filler rows={messageTopRows} prefix="top" />
+					<PlainLine text={centerCell("No commits", contentWidth)} fg={colors.muted} />
+					<Filler rows={messageBottomRows} prefix="bottom" />
+				</>
+			) : (
+				visibleCommits.map((commit, index) => {
+					const actualIndex = scrollStart + index
+					const isSelected = actualIndex === clampedIndex
+					const shortOid = commit.oid.slice(0, 7)
+					const timeStr = commitTimeAgo(commit.committedDate)
+					const metaWidth = shortOid.length + 1 + timeStr.length + 1
+					const msgWidth = Math.max(1, contentWidth - metaWidth - commit.author.length - 2)
+					return (
+						<TextLine
+							key={commit.oid}
+							width={contentWidth}
+							bg={isSelected ? colors.selectedBg : undefined}
+							fg={isSelected ? colors.selectedText : colors.text}
+						>
+							<span fg={isSelected ? colors.selectedText : colors.accent}>{shortOid}</span>
+							<span> </span>
+							<span>{fitCell(commit.messageHeadline, msgWidth)}</span>
+							<span fg={isSelected ? colors.selectedText : colors.muted}> {fitCell(commit.author, commit.author.length)}</span>
+							<span fg={isSelected ? colors.selectedText : colors.muted}> {timeStr}</span>
 						</TextLine>
 					)
 				})
