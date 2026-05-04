@@ -13,7 +13,7 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
 import { config } from "./config.js"
-import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestComment, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestMergeMethod, type PullRequestReviewComment, type RepositoryMergeMethods, type SubmitPullRequestReviewInput } from "./domain.js"
+import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CommitItem, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestComment, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestMergeMethod, type PullRequestReviewComment, type RepositoryMergeMethods, type SubmitPullRequestReviewInput } from "./domain.js"
 import { allowedMergeMethodList, pullRequestMergeMethods } from "./domain.js"
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
@@ -27,6 +27,7 @@ import { Clipboard } from "./services/Clipboard.js"
 import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { loadStoredDiffWhitespaceMode, loadStoredThemeId, saveStoredDiffWhitespaceMode, saveStoredThemeId } from "./themeStore.js"
+import { createStaleCache, staleFetch } from "./staleCache.js"
 import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
 import { AUXILIARY_BODY_SCROLL_LIMIT, AuxiliaryDetailBody, AuxiliaryDetailHeader, AuxiliaryDetailsPane, getAuxiliaryDetailHeaderHeight, getAuxiliaryDetailJunctionRows, getAuxiliaryDetailsPaneHeight, getScrollableAuxiliaryBodyHeight } from "./ui/AuxiliaryDetailsPane.js"
 import { auxiliaryListRowIndex, AuxiliaryList, buildAuxiliaryListRows } from "./ui/AuxiliaryList.js"
@@ -477,6 +478,9 @@ const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>
 const activeModalAtom = Atom.make<Modal>(initialModal)
 const themeIdAtom = Atom.make<ThemeId>(initialThemeId).pipe(Atom.keepAlive)
 const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}).pipe(Atom.keepAlive)
+const commitListCache = createStaleCache<readonly CommitItem[]>({
+	equals: (a, b) => a.length === b.length && a.every((c, i) => c.oid === b[i]?.oid),
+})
 const repoMergeMethodsCacheAtom = Atom.make<Record<string, RepositoryMergeMethods>>({}).pipe(Atom.keepAlive)
 const lastUsedMergeMethodAtom = Atom.make<Record<string, PullRequestMergeMethod>>({}).pipe(Atom.keepAlive)
 const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
@@ -2542,18 +2546,36 @@ export const App = () => {
 
 	const loadPullRequestCommits = useAtomSet(listPullRequestCommitsAtom, { mode: "promise" })
 	const loadCommitDiff = useAtomSet(getCommitDiffAtom, { mode: "promise" })
+	const setCommitListCacheState = useAtomSet(commitListCache.atom)
 
 	const openCommitListModal = () => {
 		if (!selectedPullRequest) return
-		setCommitListModal({ selectedIndex: 0, commits: [], loading: true })
-		void loadPullRequestCommits({ repository: selectedPullRequest.repository, number: selectedPullRequest.number })
-			.then((commits) => {
-				setCommitListModal((current) => ({ ...current, commits, loading: false }))
-			})
-			.catch((error) => {
+		const cacheKey = `${selectedPullRequest.repository}#${selectedPullRequest.number}`
+		const currentCache = registry.get(commitListCache.atom)
+
+		const cached = staleFetch(
+			commitListCache,
+			cacheKey,
+			currentCache,
+			setCommitListCacheState,
+			() => loadPullRequestCommits({ repository: selectedPullRequest.repository, number: selectedPullRequest.number }),
+			(freshCommits) => {
+				setCommitListModal((current) => {
+					const selectedIndex = Math.min(current.selectedIndex, Math.max(0, freshCommits.length - 1))
+					return { selectedIndex, commits: freshCommits, loading: false }
+				})
+			},
+			(error) => {
 				setCommitListModal((current) => ({ ...current, loading: false }))
 				flashNotice(errorMessage(error))
-			})
+			},
+		)
+
+		setCommitListModal({
+			selectedIndex: 0,
+			commits: cached ?? [],
+			loading: !cached,
+		})
 	}
 
 	const openCommitDiff = () => {
