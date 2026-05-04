@@ -162,15 +162,15 @@ describe("PR list scrolling", () => {
 		renderer.destroy()
 	})
 
-	test("details show summary and conversation in one document", async () => {
+	test("details show summary and comments in one document", async () => {
 		const { captureCharFrame, renderOnce, renderer } = await setupApp(120, 24)
 		const loaded = await settle(renderOnce, () => {
 			const frame = captureCharFrame()
-			return frame.includes("Line B") && frame.includes("Conversation") && frame.includes("Top-level discussion")
+			return frame.includes("Line B") && frame.includes("Comments") && frame.includes("Top-level discussion")
 		})
 		expect(loaded).toBe(true)
 		const frame = captureCharFrame()
-		expect(frame.indexOf("Line B")).toBeLessThan(frame.indexOf("Conversation"))
+		expect(frame.indexOf("Line B")).toBeLessThan(frame.indexOf("Comments"))
 		renderer.destroy()
 	})
 

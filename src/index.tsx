@@ -1,37 +1,53 @@
 #!/usr/bin/env bun
 
-import { addDefaultParsers, createCliRenderer, createTerminalPalette } from "@opentui/core"
-import { RegistryProvider } from "@effect/atom-react"
-import { createRoot } from "@opentui/react"
+import { addDefaultParsers, createCliRenderer } from "@opentui/core"
+import { createRoot, useRenderer, useTerminalDimensions } from "@opentui/react"
+import { useEffect, useState } from "react"
+import { colors, setSystemThemeColors } from "./ui/colors.js"
+import { LoadingLogoPane } from "./ui/LoadingLogo.js"
+import { SPINNER_INTERVAL_MS } from "./ui/spinner.js"
 
 process.env.OTUI_USE_ALTERNATE_SCREEN = "true"
 
-addDefaultParsers([
-	{
-		filetype: "bash",
-		aliases: ["sh", "shell", "zsh", "ksh"],
-		wasm: "https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.1/tree-sitter-bash.wasm",
-		queries: {
-			highlights: ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/v0.25.1/queries/highlights.scm"],
+const addGhUiParsers = () =>
+	addDefaultParsers([
+		{
+			filetype: "bash",
+			aliases: ["sh", "shell", "zsh", "ksh"],
+			wasm: "https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.1/tree-sitter-bash.wasm",
+			queries: {
+				highlights: ["https://raw.githubusercontent.com/tree-sitter/tree-sitter-bash/v0.25.1/queries/highlights.scm"],
+			},
 		},
-	},
-])
+	])
 
 const FOCUS_REPORTING_ENABLE = "\x1b[?1004h"
 const FOCUS_REPORTING_DISABLE = "\x1b[?1004l"
 
-const paletteDetector = createTerminalPalette(process.stdin, process.stdout)
-const [terminalColors, { setSystemThemeColors }, { App }] = await Promise.all([
-	paletteDetector
-		.detect({ timeout: 150 })
-		.catch(() => null)
-		.finally(() => paletteDetector.cleanup()),
-	import("./ui/colors.js"),
-	import("./App.js"),
-])
+type AppBundle = {
+	readonly RegistryProvider: (typeof import("@effect/atom-react"))["RegistryProvider"]
+	readonly App: (typeof import("./App.js"))["App"]
+}
 
-if (terminalColors) {
-	setSystemThemeColors(terminalColors)
+const StartupLogo = () => {
+	const startupRenderer = useRenderer()
+	const { width, height } = useTerminalDimensions()
+	const [frame, setFrame] = useState(0)
+
+	useEffect(() => {
+		startupRenderer.setBackgroundColor(colors.background)
+	}, [startupRenderer])
+
+	useEffect(() => {
+		const interval = globalThis.setInterval(() => setFrame((current) => current + 1), SPINNER_INTERVAL_MS)
+		return () => globalThis.clearInterval(interval)
+	}, [])
+
+	return (
+		<box width={width} height={height} flexDirection="column" backgroundColor={colors.background}>
+			<LoadingLogoPane content={{ hint: "Fetching latest open PRs" }} width={width} height={height} frame={frame} />
+		</box>
+	)
 }
 
 const renderer = await createCliRenderer({
@@ -44,10 +60,47 @@ const renderer = await createCliRenderer({
 	},
 })
 
+const Bootstrap = () => {
+	const [appBundle, setAppBundle] = useState<AppBundle | null>(null)
+
+	useEffect(() => {
+		let cancelled = false
+		const timer = globalThis.setTimeout(() => {
+			addGhUiParsers()
+
+			const appBundlePromise = Promise.all([import("@effect/atom-react"), import("./App.js")])
+			const palettePromise = renderer
+				.getPalette({ timeout: 150, size: 16 })
+				.then((terminalColors) => {
+					if (cancelled) return
+					setSystemThemeColors(terminalColors)
+				})
+				.catch(() => {})
+
+			void Promise.all([appBundlePromise, palettePromise]).then(([[{ RegistryProvider }, { App }]]) => {
+				if (cancelled) return
+				setAppBundle({ RegistryProvider, App })
+			})
+		}, 0)
+
+		return () => {
+			cancelled = true
+			globalThis.clearTimeout(timer)
+		}
+	}, [])
+
+	if (appBundle) {
+		const { RegistryProvider, App } = appBundle
+		return (
+			<RegistryProvider>
+				<App />
+			</RegistryProvider>
+		)
+	}
+
+	return <StartupLogo />
+}
+
 process.stdout.write(FOCUS_REPORTING_ENABLE)
 
-createRoot(renderer).render(
-	<RegistryProvider>
-		<App />
-	</RegistryProvider>,
-)
+createRoot(renderer).render(<Bootstrap />)

@@ -13,6 +13,7 @@ const scopeLabels = {
 	Issue: "Issue",
 	GitHub: "GitHub",
 	Diff: "Diff",
+	Comments: "Comments",
 	Navigation: "Navigation",
 	System: "System",
 } as const satisfies Record<AppCommand["scope"], string>

@@ -38,6 +38,7 @@ export const listNavKeymap = List(
 	{ id: "list.surface.sharedRepos", title: "Show shared repositories", keys: [surfaceShortcutKeys.sharedRepos], run: (s) => s.runCommandById("surface.sharedRepos") },
 	{ id: "list.surface.watchedRepos", title: "Show watched repositories", keys: [surfaceShortcutKeys.watchedRepos], run: (s) => s.runCommandById("surface.watchedRepos") },
 	{ id: "list.diff", title: "Open diff", keys: ["d"], run: (s) => s.runCommandById("diff.open") },
+	{ id: "list.comments", title: "Open comments", keys: ["c"], run: (s) => s.runCommandById("comments.open") },
 	{ id: "list.review", title: "Review pull request", keys: ["shift+r"], run: (s) => s.runCommandById("pull.submit-review") },
 	{ id: "list.labels", title: "Labels", keys: ["l"], run: (s) => s.runCommandById("pull.labels") },
 	{ id: "list.merge", title: "Merge", keys: ["m", "shift+m"], run: (s) => s.runCommandById("pull.merge") },

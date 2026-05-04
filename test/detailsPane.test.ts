@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { PullRequestConversationItem, PullRequestItem } from "../src/domain.ts"
+import type { PullRequestComment, PullRequestItem } from "../src/domain.ts"
 import { getDetailJunctionRows, getScrollableDetailBodyHeight, truncateConversationPath } from "../src/ui/DetailsPane.tsx"
 
 const pullRequest = (body: string): PullRequestItem => ({
@@ -41,7 +41,7 @@ describe("truncateConversationPath", () => {
 	})
 })
 
-const conversation: readonly PullRequestConversationItem[] = [
+const comments: readonly PullRequestComment[] = [
 	{
 		_tag: "comment",
 		id: "comment-1",
@@ -53,7 +53,7 @@ const conversation: readonly PullRequestConversationItem[] = [
 ]
 
 describe("detail pane junction rows", () => {
-	test("keeps the conversation connector aligned with the scrolled body divider", () => {
+	test("keeps the comments connector aligned with the scrolled body divider", () => {
 		const pr = pullRequest("Line A\nLine B\nLine C")
 		const headerDividerRow = 3
 		const conversationDividerAtTop = 7
@@ -64,8 +64,8 @@ describe("detail pane junction rows", () => {
 				pullRequest: pr,
 				paneWidth: 60,
 				contentWidth: 58,
-				conversationItems: conversation,
-				conversationStatus: "ready",
+				comments: comments,
+				commentsStatus: "ready",
 				bodyScrollTop: 0,
 				bodyViewportHeight: 10,
 			}),
@@ -75,15 +75,15 @@ describe("detail pane junction rows", () => {
 				pullRequest: pr,
 				paneWidth: 60,
 				contentWidth: 58,
-				conversationItems: conversation,
-				conversationStatus: "ready",
+				comments: comments,
+				commentsStatus: "ready",
 				bodyScrollTop: 2,
 				bodyViewportHeight: 10,
 			}),
 		).toEqual([headerDividerRow, conversationDividerAfterScroll])
 	})
 
-	test("hides the conversation connector when the divider is outside the body viewport", () => {
+	test("hides the comments connector when the divider is outside the body viewport", () => {
 		const pr = pullRequest("Line A\nLine B\nLine C")
 		const headerDividerRow = 3
 
@@ -92,8 +92,8 @@ describe("detail pane junction rows", () => {
 				pullRequest: pr,
 				paneWidth: 60,
 				contentWidth: 58,
-				conversationItems: conversation,
-				conversationStatus: "ready",
+				comments: comments,
+				commentsStatus: "ready",
 				bodyScrollTop: 4,
 				bodyViewportHeight: 10,
 			}),
@@ -103,21 +103,21 @@ describe("detail pane junction rows", () => {
 				pullRequest: pr,
 				paneWidth: 60,
 				contentWidth: 58,
-				conversationItems: conversation,
-				conversationStatus: "ready",
+				comments: comments,
+				commentsStatus: "ready",
 				bodyScrollTop: 0,
 				bodyViewportHeight: 2,
 			}),
 		).toEqual([headerDividerRow])
 	})
 
-	test("does not reserve conversation space while loading or empty", () => {
+	test("does not reserve comments space while loading or empty", () => {
 		const pr = pullRequest("Line A\nLine B")
 		const baseJunctionRows = getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, contentWidth: 58 })
 		const baseBodyHeight = getScrollableDetailBodyHeight(pr, 58)
 
-		expect(getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, contentWidth: 58, conversationItems: [], conversationStatus: "loading" })).toEqual(baseJunctionRows)
-		expect(getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, contentWidth: 58, conversationItems: [], conversationStatus: "ready" })).toEqual(baseJunctionRows)
+		expect(getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, contentWidth: 58, comments: [], commentsStatus: "loading" })).toEqual(baseJunctionRows)
+		expect(getDetailJunctionRows({ pullRequest: pr, paneWidth: 60, contentWidth: 58, comments: [], commentsStatus: "ready" })).toEqual(baseJunctionRows)
 		expect(getScrollableDetailBodyHeight(pr, 58, [], "loading")).toBe(baseBodyHeight)
 		expect(getScrollableDetailBodyHeight(pr, 58, [], "ready")).toBe(baseBodyHeight)
 	})

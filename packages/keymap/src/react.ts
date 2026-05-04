@@ -4,7 +4,7 @@ import type { ParsedStroke } from "./keys.ts"
 import type { Keymap } from "./keymap.ts"
 import type { DispatchState } from "./pure-dispatch.ts"
 
-export type KeySubscribe = (handler: (stroke: ParsedStroke) => void) => () => void
+export type KeySubscribe = (handler: (stroke: ParsedStroke) => boolean | void) => () => void
 
 /**
  * Mounts a Keymap. Subscribes to host key events through `subscribe`; reads
@@ -27,7 +27,7 @@ export const useKeymap = <C>(
 		[keymap],
 	)
 
-	useEffect(() => subscribe((stroke) => dispatcher.dispatch(stroke)), [dispatcher, subscribe])
+	useEffect(() => subscribe((stroke) => dispatcher.dispatch(stroke).kind !== "no-match"), [dispatcher, subscribe])
 
 	return dispatcher
 }

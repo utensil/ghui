@@ -3,17 +3,30 @@ export type ThemeId =
 	| "ghui"
 	| "tokyo-night"
 	| "catppuccin"
+	| "catppuccin-latte"
 	| "rose-pine"
+	| "rose-pine-dawn"
 	| "gruvbox"
+	| "gruvbox-light"
 	| "nord"
 	| "dracula"
 	| "kanagawa"
 	| "one-dark"
+	| "one-light"
 	| "monokai"
 	| "solarized-dark"
+	| "solarized-light"
 	| "everforest"
 	| "vesper"
+	| "vague"
+	| "ayu"
+	| "ayu-mirage"
+	| "ayu-light"
+	| "github-dark-dimmed"
+	| "palenight"
 	| "opencode"
+
+export type ThemeTone = "dark" | "light"
 
 export interface ColorPalette {
 	readonly background: string
@@ -22,6 +35,7 @@ export interface ColorPalette {
 	readonly muted: string
 	readonly separator: string
 	readonly accent: string
+	readonly link: string
 	readonly inlineCode: string
 	readonly error: string
 	readonly selectedBg: string
@@ -58,6 +72,7 @@ export interface ThemeDefinition {
 	readonly id: ThemeId
 	readonly name: string
 	readonly description: string
+	readonly tone: ThemeTone
 	readonly colors: ColorPalette
 }
 
@@ -103,6 +118,8 @@ export const mixHex = (base: string, overlay: string, amount: number) => {
 		b: from.b + (to.b - from.b) * amount,
 	})
 }
+
+export const rowHoverBackground = () => mixHex(colors.modalBackground, colors.selectedBg, 0.38)
 
 const grayscaleRamp = (background: string) => {
 	const bg = hexToRgb(background)
@@ -171,6 +188,7 @@ const ghuiColors: ColorPalette = {
 	muted: "#9f9788",
 	separator: "#6f685d",
 	accent: "#f4a51c",
+	link: "#7fb4ca",
 	inlineCode: "#d7c5a1",
 	error: "#f97316",
 	selectedBg: "#1d2430",
@@ -232,6 +250,7 @@ const makeSystemColors = (terminal?: TerminalThemeColors): ColorPalette => {
 		muted: mutedTextColor(terminalBackground),
 		separator: border,
 		accent: primary,
+		link: brightBlue,
 		inlineCode: brightGreen,
 		error: red,
 		selectedBg: primary,
@@ -274,6 +293,7 @@ const tokyoNightColors: ColorPalette = {
 	muted: "#787c99",
 	separator: "#3b4261",
 	accent: "#7aa2f7",
+	link: "#7dcfff",
 	inlineCode: "#bb9af7",
 	error: "#f7768e",
 	selectedBg: "#283457",
@@ -313,6 +333,7 @@ const opencodeColors: ColorPalette = {
 	muted: "#808080",
 	separator: "#484848",
 	accent: "#fab283",
+	link: "#5c9cf5",
 	inlineCode: "#7fd88f",
 	error: "#e06c75",
 	selectedBg: "#323232",
@@ -352,6 +373,7 @@ const catppuccinColors: ColorPalette = {
 	muted: "#7f849c",
 	separator: "#45475a",
 	accent: "#cba6f7",
+	link: "#89b4fa",
 	inlineCode: "#f5c2e7",
 	error: "#f38ba8",
 	selectedBg: "#45475a",
@@ -384,6 +406,46 @@ const catppuccinColors: ColorPalette = {
 	},
 }
 
+const catppuccinLatteColors: ColorPalette = {
+	background: "#eff1f5",
+	modalBackground: "#e6e9ef",
+	text: "#4c4f69",
+	muted: "#8c8fa1",
+	separator: "#ccd0da",
+	accent: "#8839ef",
+	link: "#1e66f5",
+	inlineCode: "#ea76cb",
+	error: "#d20f39",
+	selectedBg: "#dce0e8",
+	selectedText: "#4c4f69",
+	count: "#fe640b",
+	status: {
+		draft: "#df8e1d",
+		approved: "#40a02b",
+		changes: "#d20f39",
+		review: "#1e66f5",
+		none: "#8c8fa1",
+		passing: "#40a02b",
+		pending: "#df8e1d",
+		failing: "#d20f39",
+	},
+	repos: {
+		opencode: "#1e66f5",
+		"effect-smol": "#40a02b",
+		"opencode-console": "#ea76cb",
+		opencontrol: "#fe640b",
+		default: "#209fb5",
+	},
+	diff: {
+		addedBg: "#d9f0d1",
+		removedBg: "#f5d8d6",
+		contextBg: "transparent",
+		lineNumberBg: "#e6e9ef",
+		addedLineNumberBg: "#d1ebd0",
+		removedLineNumberBg: "#f0dcd9",
+	},
+}
+
 const rosePineColors: ColorPalette = {
 	background: "#191724",
 	modalBackground: "#26233a",
@@ -391,6 +453,7 @@ const rosePineColors: ColorPalette = {
 	muted: "#908caa",
 	separator: "#524f67",
 	accent: "#c4a7e7",
+	link: "#9ccfd8",
 	inlineCode: "#f6c177",
 	error: "#eb6f92",
 	selectedBg: "#403d52",
@@ -423,6 +486,46 @@ const rosePineColors: ColorPalette = {
 	},
 }
 
+const rosePineDawnColors: ColorPalette = {
+	background: "#faf4ed",
+	modalBackground: "#f2e9e1",
+	text: "#575279",
+	muted: "#9893a5",
+	separator: "#d5c6d3",
+	accent: "#907aa9",
+	link: "#56949f",
+	inlineCode: "#ea9d34",
+	error: "#b4637a",
+	selectedBg: "#e6dfdb",
+	selectedText: "#575279",
+	count: "#d7827a",
+	status: {
+		draft: "#ea9d34",
+		approved: "#56949f",
+		changes: "#b4637a",
+		review: "#286983",
+		none: "#9893a5",
+		passing: "#56949f",
+		pending: "#ea9d34",
+		failing: "#b4637a",
+	},
+	repos: {
+		opencode: "#286983",
+		"effect-smol": "#56949f",
+		"opencode-console": "#907aa9",
+		opencontrol: "#ea9d34",
+		default: "#d7827a",
+	},
+	diff: {
+		addedBg: "#e3f0e8",
+		removedBg: "#f5e1e0",
+		contextBg: "transparent",
+		lineNumberBg: "#f2e9e1",
+		addedLineNumberBg: "#dcede3",
+		removedLineNumberBg: "#f0dede",
+	},
+}
+
 const gruvboxColors: ColorPalette = {
 	background: "#282828",
 	modalBackground: "#3c3836",
@@ -430,6 +533,7 @@ const gruvboxColors: ColorPalette = {
 	muted: "#928374",
 	separator: "#665c54",
 	accent: "#fabd2f",
+	link: "#83a598",
 	inlineCode: "#d3869b",
 	error: "#fb4934",
 	selectedBg: "#504945",
@@ -462,6 +566,46 @@ const gruvboxColors: ColorPalette = {
 	},
 }
 
+const gruvboxLightColors: ColorPalette = {
+	background: "#fbf1c7",
+	modalBackground: "#ebdbb2",
+	text: "#3c3836",
+	muted: "#928374",
+	separator: "#d5c4a1",
+	accent: "#b57614",
+	link: "#076678",
+	inlineCode: "#8f3f71",
+	error: "#cc241d",
+	selectedBg: "#d5c4a1",
+	selectedText: "#3c3836",
+	count: "#af3a03",
+	status: {
+		draft: "#b57614",
+		approved: "#79740e",
+		changes: "#cc241d",
+		review: "#076678",
+		none: "#928374",
+		passing: "#79740e",
+		pending: "#b57614",
+		failing: "#cc241d",
+	},
+	repos: {
+		opencode: "#076678",
+		"effect-smol": "#79740e",
+		"opencode-console": "#8f3f71",
+		opencontrol: "#af3a03",
+		default: "#427b58",
+	},
+	diff: {
+		addedBg: "#e6f3d8",
+		removedBg: "#f7e1d6",
+		contextBg: "transparent",
+		lineNumberBg: "#ebdbb2",
+		addedLineNumberBg: "#dbebd1",
+		removedLineNumberBg: "#f0ddd6",
+	},
+}
+
 const nordColors: ColorPalette = {
 	background: "#2e3440",
 	modalBackground: "#3b4252",
@@ -469,6 +613,7 @@ const nordColors: ColorPalette = {
 	muted: "#8892a7",
 	separator: "#4c566a",
 	accent: "#88c0d0",
+	link: "#81a1c1",
 	inlineCode: "#b48ead",
 	error: "#bf616a",
 	selectedBg: "#434c5e",
@@ -508,6 +653,7 @@ const draculaColors: ColorPalette = {
 	muted: "#8f94b8",
 	separator: "#4f5268",
 	accent: "#bd93f9",
+	link: "#8be9fd",
 	inlineCode: "#ff79c6",
 	error: "#ff5555",
 	selectedBg: "#44475a",
@@ -547,6 +693,7 @@ const kanagawaColors: ColorPalette = {
 	muted: "#727169",
 	separator: "#54546d",
 	accent: "#7e9cd8",
+	link: "#7fb4ca",
 	inlineCode: "#d27e99",
 	error: "#c34043",
 	selectedBg: "#363646",
@@ -586,6 +733,7 @@ const oneDarkColors: ColorPalette = {
 	muted: "#7f848e",
 	separator: "#4b5263",
 	accent: "#61afef",
+	link: "#56b6c2",
 	inlineCode: "#c678dd",
 	error: "#e06c75",
 	selectedBg: "#3e4451",
@@ -618,6 +766,46 @@ const oneDarkColors: ColorPalette = {
 	},
 }
 
+const oneLightColors: ColorPalette = {
+	background: "#fafafa",
+	modalBackground: "#f0f0f0",
+	text: "#383a42",
+	muted: "#a0a1a7",
+	separator: "#d5d5d5",
+	accent: "#4078f2",
+	link: "#0184bc",
+	inlineCode: "#a626a4",
+	error: "#e45649",
+	selectedBg: "#e5e5e6",
+	selectedText: "#383a42",
+	count: "#c18401",
+	status: {
+		draft: "#c18401",
+		approved: "#50a14f",
+		changes: "#e45649",
+		review: "#4078f2",
+		none: "#a0a1a7",
+		passing: "#50a14f",
+		pending: "#c18401",
+		failing: "#e45649",
+	},
+	repos: {
+		opencode: "#4078f2",
+		"effect-smol": "#50a14f",
+		"opencode-console": "#a626a4",
+		opencontrol: "#c18401",
+		default: "#0184bc",
+	},
+	diff: {
+		addedBg: "#e1f0d8",
+		removedBg: "#f5e1df",
+		contextBg: "transparent",
+		lineNumberBg: "#f0f0f0",
+		addedLineNumberBg: "#d5ebd4",
+		removedLineNumberBg: "#f0dedc",
+	},
+}
+
 const monokaiColors: ColorPalette = {
 	background: "#272822",
 	modalBackground: "#383830",
@@ -625,6 +813,7 @@ const monokaiColors: ColorPalette = {
 	muted: "#90908a",
 	separator: "#5b5b50",
 	accent: "#66d9ef",
+	link: "#66d9ef",
 	inlineCode: "#ae81ff",
 	error: "#f92672",
 	selectedBg: "#49483e",
@@ -664,6 +853,7 @@ const solarizedDarkColors: ColorPalette = {
 	muted: "#839496",
 	separator: "#586e75",
 	accent: "#268bd2",
+	link: "#268bd2",
 	inlineCode: "#2aa198",
 	error: "#dc322f",
 	selectedBg: "#174652",
@@ -696,6 +886,46 @@ const solarizedDarkColors: ColorPalette = {
 	},
 }
 
+const solarizedLightColors: ColorPalette = {
+	background: "#fdf6e3",
+	modalBackground: "#eee8d5",
+	text: "#657b83",
+	muted: "#93a1a1",
+	separator: "#d5cdb8",
+	accent: "#268bd2",
+	link: "#268bd2",
+	inlineCode: "#2aa198",
+	error: "#dc322f",
+	selectedBg: "#e4ddc9",
+	selectedText: "#073642",
+	count: "#cb4b16",
+	status: {
+		draft: "#b58900",
+		approved: "#859900",
+		changes: "#dc322f",
+		review: "#268bd2",
+		none: "#93a1a1",
+		passing: "#859900",
+		pending: "#b58900",
+		failing: "#dc322f",
+	},
+	repos: {
+		opencode: "#268bd2",
+		"effect-smol": "#859900",
+		"opencode-console": "#d33682",
+		opencontrol: "#cb4b16",
+		default: "#2aa198",
+	},
+	diff: {
+		addedBg: "#e7f2d5",
+		removedBg: "#f5e1d7",
+		contextBg: "transparent",
+		lineNumberBg: "#f2e9d8",
+		addedLineNumberBg: "#e3edd7",
+		removedLineNumberBg: "#f0e0d8",
+	},
+}
+
 const everforestColors: ColorPalette = {
 	background: "#2d353b",
 	modalBackground: "#343f44",
@@ -703,6 +933,7 @@ const everforestColors: ColorPalette = {
 	muted: "#859289",
 	separator: "#56635f",
 	accent: "#7fbbb3",
+	link: "#7fbbb3",
 	inlineCode: "#d699b6",
 	error: "#e67e80",
 	selectedBg: "#465258",
@@ -742,6 +973,7 @@ const vesperColors: ColorPalette = {
 	muted: "#A0A0A0",
 	separator: "#282828",
 	accent: "#FFC799",
+	link: "#99FFE4",
 	inlineCode: "#99FFE4",
 	error: "#FF8080",
 	selectedBg: "#232323",
@@ -774,23 +1006,293 @@ const vesperColors: ColorPalette = {
 	},
 }
 
+const vagueColors: ColorPalette = {
+	background: "#141415",
+	modalBackground: "#1c1c24",
+	text: "#cdcdcd",
+	muted: "#606079",
+	separator: "#252530",
+	accent: "#6e94b2",
+	link: "#6e94b2",
+	inlineCode: "#e8b589",
+	error: "#d8647e",
+	selectedBg: "#333738",
+	selectedText: "#cdcdcd",
+	count: "#e0a363",
+	status: {
+		draft: "#f3be7c",
+		approved: "#7fa563",
+		changes: "#d8647e",
+		review: "#7e98e8",
+		none: "#606079",
+		passing: "#7fa563",
+		pending: "#f3be7c",
+		failing: "#d8647e",
+	},
+	repos: {
+		opencode: "#6e94b2",
+		"effect-smol": "#7fa563",
+		"opencode-console": "#bb9dbd",
+		opencontrol: "#e0a363",
+		default: "#b4d4cf",
+	},
+	diff: {
+		addedBg: "#293125",
+		removedBg: "#3b242a",
+		contextBg: "transparent",
+		lineNumberBg: "#1c1c24",
+		addedLineNumberBg: "#253020",
+		removedLineNumberBg: "#352126",
+	},
+}
+
+// Ayu theme - Modern bright theme with dark, mirage, and light variants
+const ayuColors: ColorPalette = {
+	background: "#0f1419",
+	modalBackground: "#131d27",
+	text: "#bfbdb6",
+	muted: "#565b66",
+	separator: "#242936",
+	accent: "#39bae6",
+	link: "#73b8ff",
+	inlineCode: "#73b8ff",
+	error: "#f26d78",
+	selectedBg: "#1c2c3b",
+	selectedText: "#e6e1cf",
+	count: "#f29718",
+	status: {
+		draft: "#ffb454",
+		approved: "#7ee787",
+		changes: "#f26d78",
+		review: "#39bae6",
+		none: "#565b66",
+		passing: "#7ee787",
+		pending: "#ffb454",
+		failing: "#f26d78",
+	},
+	repos: {
+		opencode: "#39bae6",
+		"effect-smol": "#7ee787",
+		"opencode-console": "#d2a6ff",
+		opencontrol: "#f29718",
+		default: "#73b8ff",
+	},
+	diff: {
+		addedBg: "#1b322b",
+		removedBg: "#3b2226",
+		contextBg: "transparent",
+		lineNumberBg: "#0b0f14",
+		addedLineNumberBg: "#162b24",
+		removedLineNumberBg: "#321e21",
+	},
+}
+
+const ayuMirageColors: ColorPalette = {
+	background: "#1f2430",
+	modalBackground: "#242936",
+	text: "#cccac2",
+	muted: "#8a9199",
+	separator: "#33415e",
+	accent: "#73b8ff",
+	link: "#73b8ff",
+	inlineCode: "#d2a6ff",
+	error: "#f07178",
+	selectedBg: "#2a3546",
+	selectedText: "#ffffff",
+	count: "#ffcc66",
+	status: {
+		draft: "#ffcc66",
+		approved: "#87d96c",
+		changes: "#f07178",
+		review: "#73b8ff",
+		none: "#8a9199",
+		passing: "#87d96c",
+		pending: "#ffcc66",
+		failing: "#f07178",
+	},
+	repos: {
+		opencode: "#73b8ff",
+		"effect-smol": "#87d96c",
+		"opencode-console": "#d2a6ff",
+		opencontrol: "#ffcc66",
+		default: "#5ccfe6",
+	},
+	diff: {
+		addedBg: "#243b30",
+		removedBg: "#3f2c30",
+		contextBg: "transparent",
+		lineNumberBg: "#191e2a",
+		addedLineNumberBg: "#1f342b",
+		removedLineNumberBg: "#38282b",
+	},
+}
+
+const ayuLightColors: ColorPalette = {
+	background: "#fcfcfc",
+	modalBackground: "#f3f4f5",
+	text: "#5c6166",
+	muted: "#8a9199",
+	separator: "#d3d5d8",
+	accent: "#0580f2",
+	link: "#399ee6",
+	inlineCode: "#a37acc",
+	error: "#e65050",
+	selectedBg: "#e7eaed",
+	selectedText: "#24292f",
+	count: "#f29718",
+	status: {
+		draft: "#f29718",
+		approved: "#4cbf99",
+		changes: "#e65050",
+		review: "#0580f2",
+		none: "#8a9199",
+		passing: "#4cbf99",
+		pending: "#f29718",
+		failing: "#e65050",
+	},
+	repos: {
+		opencode: "#0580f2",
+		"effect-smol": "#4cbf99",
+		"opencode-console": "#a37acc",
+		opencontrol: "#f29718",
+		default: "#33a3dc",
+	},
+	diff: {
+		addedBg: "#e6f2dc",
+		removedBg: "#f5e1df",
+		contextBg: "transparent",
+		lineNumberBg: "#f0f0f0",
+		addedLineNumberBg: "#d9ebd2",
+		removedLineNumberBg: "#f0dedc",
+	},
+}
+
+// GitHub Dark Dimmed - Slightly muted variant of GitHub Dark Default
+const githubDarkDimmedColors: ColorPalette = {
+	background: "#22272e",
+	modalBackground: "#2d333b",
+	text: "#adbac7",
+	muted: "#768390",
+	separator: "#444c56",
+	accent: "#539bf5",
+	link: "#539bf5",
+	inlineCode: "#f47067",
+	error: "#e5534b",
+	selectedBg: "#373e47",
+	selectedText: "#cdd9e5",
+	count: "#da3633",
+	status: {
+		draft: "#c69026",
+		approved: "#57ab5a",
+		changes: "#e5534b",
+		review: "#539bf5",
+		none: "#768390",
+		passing: "#57ab5a",
+		pending: "#c69026",
+		failing: "#e5534b",
+	},
+	repos: {
+		opencode: "#539bf5",
+		"effect-smol": "#6bc46d",
+		"opencode-console": "#b083f0",
+		opencontrol: "#e0823d",
+		default: "#6cb6ff",
+	},
+	diff: {
+		addedBg: "#1b3a2a",
+		removedBg: "#3b2626",
+		contextBg: "transparent",
+		lineNumberBg: "#1c2128",
+		addedLineNumberBg: "#163225",
+		removedLineNumberBg: "#332222",
+	},
+}
+
+// Material Palenight - Purple-tinted material theme variant
+const palenightColors: ColorPalette = {
+	background: "#292d3e",
+	modalBackground: "#313442",
+	text: "#a6accd",
+	muted: "#676e95",
+	separator: "#3e4451",
+	accent: "#82aaff",
+	link: "#82aaff",
+	inlineCode: "#c792ea",
+	error: "#ff5370",
+	selectedBg: "#3d445b",
+	selectedText: "#ffffff",
+	count: "#ffcb6b",
+	status: {
+		draft: "#ffcb6b",
+		approved: "#c3e88d",
+		changes: "#ff5370",
+		review: "#82aaff",
+		none: "#676e95",
+		passing: "#c3e88d",
+		pending: "#ffcb6b",
+		failing: "#ff5370",
+	},
+	repos: {
+		opencode: "#82aaff",
+		"effect-smol": "#c3e88d",
+		"opencode-console": "#c792ea",
+		opencontrol: "#ffcb6b",
+		default: "#89ddff",
+	},
+	diff: {
+		addedBg: "#253328",
+		removedBg: "#3b252d",
+		contextBg: "transparent",
+		lineNumberBg: "#232634",
+		addedLineNumberBg: "#1f2d24",
+		removedLineNumberBg: "#332329",
+	},
+}
+
 export const themeDefinitions: readonly ThemeDefinition[] = [
-	{ id: "system", name: "System", description: "Use the terminal foreground, background, and ANSI palette", colors: systemColors },
-	{ id: "ghui", name: "GHUI", description: "Warm parchment accents on a deep slate background", colors: ghuiColors },
-	{ id: "tokyo-night", name: "Tokyo Night", description: "Cool indigo surfaces with neon editor accents", colors: tokyoNightColors },
-	{ id: "catppuccin", name: "Catppuccin", description: "Mocha lavender, peach, and soft pastel contrast", colors: catppuccinColors },
-	{ id: "rose-pine", name: "Rose Pine", description: "Muted rose, pine, and gold on dusky violet", colors: rosePineColors },
-	{ id: "gruvbox", name: "Gruvbox", description: "Retro warm earth tones with punchy semantic accents", colors: gruvboxColors },
-	{ id: "nord", name: "Nord", description: "Arctic blue-gray surfaces with frosty accents", colors: nordColors },
-	{ id: "dracula", name: "Dracula", description: "High-contrast purple, pink, cyan, and green", colors: draculaColors },
-	{ id: "kanagawa", name: "Kanagawa", description: "Ink-wash indigo, wave blues, and autumn accents", colors: kanagawaColors },
-	{ id: "one-dark", name: "One Dark", description: "Atom-style charcoal with clean blue and green accents", colors: oneDarkColors },
-	{ id: "monokai", name: "Monokai", description: "Classic dark olive with electric syntax colors", colors: monokaiColors },
-	{ id: "solarized-dark", name: "Solarized Dark", description: "Low-contrast blue-green base with calibrated accents", colors: solarizedDarkColors },
-	{ id: "everforest", name: "Everforest", description: "Soft green-gray forest tones with warm highlights", colors: everforestColors },
-	{ id: "vesper", name: "Vesper", description: "Minimal black surfaces with peach and aqua accents", colors: vesperColors },
-	{ id: "opencode", name: "OpenCode", description: "Charcoal panels with peach, violet, and blue highlights", colors: opencodeColors },
+	{ id: "system", name: "System", description: "Use the terminal foreground, background, and ANSI palette", tone: "dark", colors: systemColors },
+	{ id: "ghui", name: "GHUI", description: "Warm parchment accents on a deep slate background", tone: "dark", colors: ghuiColors },
+	{ id: "tokyo-night", name: "Tokyo Night", description: "Cool indigo surfaces with neon editor accents", tone: "dark", colors: tokyoNightColors },
+	{ id: "catppuccin", name: "Catppuccin", description: "Mocha lavender, peach, and soft pastel contrast", tone: "dark", colors: catppuccinColors },
+	{ id: "catppuccin-latte", name: "Catppuccin Latte", description: "Light frothy cream with pastel lavender and peach", tone: "light", colors: catppuccinLatteColors },
+	{ id: "rose-pine", name: "Rose Pine", description: "Muted rose, pine, and gold on dusky violet", tone: "dark", colors: rosePineColors },
+	{ id: "rose-pine-dawn", name: "Rose Pine Dawn", description: "Soft morning light with rose and sage accents", tone: "light", colors: rosePineDawnColors },
+	{ id: "gruvbox", name: "Gruvbox", description: "Retro warm earth tones with punchy semantic accents", tone: "dark", colors: gruvboxColors },
+	{ id: "gruvbox-light", name: "Gruvbox Light", description: "Warm parchment background with earthy retro colors", tone: "light", colors: gruvboxLightColors },
+	{ id: "nord", name: "Nord", description: "Arctic blue-gray surfaces with frosty accents", tone: "dark", colors: nordColors },
+	{ id: "dracula", name: "Dracula", description: "High-contrast purple, pink, cyan, and green", tone: "dark", colors: draculaColors },
+	{ id: "kanagawa", name: "Kanagawa", description: "Ink-wash indigo, wave blues, and autumn accents", tone: "dark", colors: kanagawaColors },
+	{ id: "one-dark", name: "One Dark", description: "Atom-style charcoal with clean blue and green accents", tone: "dark", colors: oneDarkColors },
+	{ id: "one-light", name: "One Light", description: "Clean light surfaces with balanced blue and green accents", tone: "light", colors: oneLightColors },
+	{ id: "monokai", name: "Monokai", description: "Classic dark olive with electric syntax colors", tone: "dark", colors: monokaiColors },
+	{ id: "solarized-dark", name: "Solarized Dark", description: "Low-contrast blue-green base with calibrated accents", tone: "dark", colors: solarizedDarkColors },
+	{ id: "solarized-light", name: "Solarized Light", description: "Warm beige base with the same calibrated accent colors", tone: "light", colors: solarizedLightColors },
+	{ id: "everforest", name: "Everforest", description: "Soft green-gray forest tones with warm highlights", tone: "dark", colors: everforestColors },
+	{ id: "vesper", name: "Vesper", description: "Minimal black surfaces with peach and aqua accents", tone: "dark", colors: vesperColors },
+	{ id: "vague", name: "Vague", description: "Muted low-contrast charcoal with soft editor accents", tone: "dark", colors: vagueColors },
+	{ id: "ayu", name: "Ayu", description: "Modern bright dark theme with blue and orange accents", tone: "dark", colors: ayuColors },
+	{ id: "ayu-mirage", name: "Ayu Mirage", description: "Medium-contrast blue-gray with vibrant syntax colors", tone: "dark", colors: ayuMirageColors },
+	{ id: "ayu-light", name: "Ayu Light", description: "Clean light theme with crisp blue and orange accents", tone: "light", colors: ayuLightColors },
+	{ id: "github-dark-dimmed", name: "GitHub Dark Dimmed", description: "GitHub-inspired muted dark blue-gray with soft accents", tone: "dark", colors: githubDarkDimmedColors },
+	{ id: "palenight", name: "Palenight", description: "Material-inspired purple-blue with soft lavender tones", tone: "dark", colors: palenightColors },
+	{ id: "opencode", name: "OpenCode", description: "Charcoal panels with peach, violet, and blue highlights", tone: "dark", colors: opencodeColors },
 ] as const
+
+const pairedThemeIds: Partial<Record<ThemeId, ThemeId>> = {
+	catppuccin: "catppuccin-latte",
+	"catppuccin-latte": "catppuccin",
+	"rose-pine": "rose-pine-dawn",
+	"rose-pine-dawn": "rose-pine",
+	gruvbox: "gruvbox-light",
+	"gruvbox-light": "gruvbox",
+	"one-dark": "one-light",
+	"one-light": "one-dark",
+	"solarized-dark": "solarized-light",
+	"solarized-light": "solarized-dark",
+	ayu: "ayu-light",
+	"ayu-mirage": "ayu-light",
+	"ayu-light": "ayu",
+}
 
 let activeTheme = themeDefinitions.find((theme) => theme.id === "ghui") ?? themeDefinitions[0]!
 
@@ -800,10 +1302,20 @@ export const getThemeDefinition = (id: ThemeId) => themeDefinitions.find((theme)
 
 export const isThemeId = (value: unknown): value is ThemeId => typeof value === "string" && themeDefinitions.some((theme) => theme.id === value)
 
-export const filterThemeDefinitions = (query: string) => {
+export const themeToneForThemeId = (id: ThemeId): ThemeTone => getThemeDefinition(id).tone
+
+export const oppositeThemeTone = (tone: ThemeTone): ThemeTone => (tone === "dark" ? "light" : "dark")
+
+export const pairedThemeId = (id: ThemeId, tone: ThemeTone): ThemeId | null => {
+	const pairedId = pairedThemeIds[id]
+	return pairedId && themeToneForThemeId(pairedId) === tone ? pairedId : null
+}
+
+export const filterThemeDefinitions = (query: string, tone: ThemeTone = "dark") => {
 	const normalized = query.trim().toLowerCase()
-	if (normalized.length === 0) return themeDefinitions
-	return themeDefinitions.filter((theme) => theme.id.includes(normalized) || theme.name.toLowerCase().includes(normalized) || theme.description.toLowerCase().includes(normalized))
+	const matchingTone = themeDefinitions.filter((theme) => theme.tone === tone)
+	if (normalized.length === 0) return matchingTone
+	return matchingTone.filter((theme) => theme.id.includes(normalized) || theme.name.toLowerCase().includes(normalized) || theme.description.toLowerCase().includes(normalized))
 }
 
 export const setActiveTheme = (id: ThemeId) => {

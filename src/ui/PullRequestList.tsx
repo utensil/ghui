@@ -1,7 +1,8 @@
 import { TextAttributes } from "@opentui/core"
+import { useState } from "react"
 import type { LoadStatus, PullRequestItem } from "../domain.js"
 import { daysOpen } from "../date.js"
-import { colors } from "./colors.js"
+import { colors, rowHoverBackground } from "./colors.js"
 import { fitCell, MatchedCell, PlainLine, SectionTitle, TextLine } from "./primitives.js"
 import { pullRequestRowDisplay, repoColor, repositoryOwner, reviewIcon, shortRepoName } from "./pullRequests.js"
 
@@ -13,7 +14,7 @@ export type PullRequestListRow =
 	| { readonly _tag: "message"; readonly text: string; readonly color: string }
 	| { readonly _tag: "owner"; readonly owner: string }
 	| { readonly _tag: "group"; readonly repository: string; readonly pullRequests: readonly PullRequestItem[] }
-	| { readonly _tag: "pull-request"; readonly pullRequest: PullRequestItem; readonly groupPullRequests: readonly PullRequestItem[] }
+	| { readonly _tag: "pull-request"; readonly pullRequest: PullRequestItem; readonly numberWidth: number; readonly ageWidth: number }
 	| { readonly _tag: "load-more"; readonly text: string }
 
 const GROUP_ICON = "◆"
@@ -94,7 +95,9 @@ export const buildPullRequestListRows = ({
 			currentOwner = owner
 		}
 		rows.push({ _tag: "group", repository, pullRequests })
-		for (const pullRequest of pullRequests) rows.push({ _tag: "pull-request", pullRequest, groupPullRequests: pullRequests })
+		const numberWidth = groupNumberWidth(pullRequests)
+		const ageWidth = groupAgeWidth(pullRequests)
+		for (const pullRequest of pullRequests) rows.push({ _tag: "pull-request", pullRequest, numberWidth, ageWidth })
 	}
 	if (status === "ready" && itemCount > 0 && (hasMore || isLoadingMore)) {
 		rows.push({ _tag: "load-more", text: isLoadingMore ? `${loadingIndicator} Loading more pull requests... (${loadedCount} loaded)` : `- ${loadedCount} loaded, more available` })
@@ -111,19 +114,23 @@ export const pullRequestListRowIndex = (rows: readonly PullRequestListRow[], url
 const PullRequestRow = ({
 	pullRequest,
 	selected,
+	hovered,
 	contentWidth,
 	numWidth,
 	ageColWidth,
 	filterText,
 	onSelect,
+	onHoverChange,
 }: {
 	pullRequest: PullRequestItem
 	selected: boolean
+	hovered: boolean
 	contentWidth: number
 	numWidth: number
 	ageColWidth: number
 	filterText: string
 	onSelect: () => void
+	onHoverChange: (hovered: boolean) => void
 }) => {
 	const ageText = `${daysOpen(pullRequest.createdAt)}d`
 	const rowContentWidth = Math.max(8, contentWidth - ITEM_INDENT)
@@ -131,25 +138,24 @@ const PullRequestRow = ({
 	const rowWidth = reviewWidth + 1 + numberWidth + 1 + titleWidth + checkWidth + ageWidth
 	const fillerWidth = Math.max(0, rowContentWidth - rowWidth)
 	const display = pullRequestRowDisplay(pullRequest, selected)
+	const rowBg = selected ? colors.selectedBg : hovered ? rowHoverBackground() : undefined
 
 	return (
-		<box width={contentWidth} height={1} onMouseDown={onSelect}>
-			<TextLine width={contentWidth} fg={display.rowFg} bg={selected ? colors.selectedBg : undefined}>
-				<span>{" ".repeat(ITEM_INDENT)}</span>
-				<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
-				<span> </span>
-				<span fg={display.numberFg}>
-					<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
-				</span>
-				<span> </span>
-				<span>
-					<MatchedCell text={pullRequest.title} width={titleWidth} query={filterText} />
-				</span>
-				<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
-				<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
-				{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
-			</TextLine>
-		</box>
+		<TextLine width={contentWidth} fg={display.rowFg} bg={rowBg} onMouseDown={onSelect} onMouseOver={() => onHoverChange(true)} onMouseOut={() => onHoverChange(false)}>
+			<span>{" ".repeat(ITEM_INDENT)}</span>
+			<span fg={display.indicatorFg}>{fitCell(reviewIcon(pullRequest), reviewWidth)}</span>
+			<span> </span>
+			<span fg={display.numberFg}>
+				<MatchedCell text={`#${pullRequest.number}`} width={numberWidth} query={filterText} align="right" />
+			</span>
+			<span> </span>
+			<span>
+				<MatchedCell text={pullRequest.title} width={titleWidth} query={filterText} />
+			</span>
+			<span fg={display.checkFg}>{fitCell(display.checkText, checkWidth, "right")}</span>
+			<span fg={colors.muted}>{fitCell(ageText, ageWidth, "right")}</span>
+			{fillerWidth > 0 ? <span>{" ".repeat(fillerWidth)}</span> : null}
+		</TextLine>
 	)
 }
 
@@ -183,6 +189,7 @@ export const PullRequestList = ({
 	onSelectPullRequest: (url: string) => void
 }) => {
 	const rows = buildPullRequestListRows({ groups, status, error, filterText, showFilterBar, loadedCount, hasMore, isLoadingMore, loadingIndicator })
+	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
 
 	return (
 		<box width={contentWidth} flexDirection="column">
@@ -202,18 +209,21 @@ export const PullRequestList = ({
 				if (row._tag === "owner") return <GroupTitle key={`owner-${row.owner}`} label={row.owner} color={repoColor(row.owner)} filterText={filterText} />
 				if (row._tag === "group") return <RepositoryTitle key={`group-${row.repository}`} repository={row.repository} filterText={filterText} />
 
-				const numWidth = groupNumberWidth(row.groupPullRequests)
-				const ageColWidth = groupAgeWidth(row.groupPullRequests)
+				const pullRequestUrl = row.pullRequest.url
 				return (
 					<PullRequestRow
-						key={row.pullRequest.url}
+						key={pullRequestUrl}
 						pullRequest={row.pullRequest}
-						selected={row.pullRequest.url === selectedUrl}
+						selected={pullRequestUrl === selectedUrl}
+						hovered={pullRequestUrl === hoveredUrl}
 						contentWidth={contentWidth}
-						numWidth={numWidth}
-						ageColWidth={ageColWidth}
+						numWidth={row.numberWidth}
+						ageColWidth={row.ageWidth}
 						filterText={filterText}
-						onSelect={() => onSelectPullRequest(row.pullRequest.url)}
+						onSelect={() => onSelectPullRequest(pullRequestUrl)}
+						onHoverChange={(hovered) =>
+							setHoveredUrl((current) => (hovered ? (current === pullRequestUrl ? current : pullRequestUrl) : current === pullRequestUrl ? null : current))
+						}
 					/>
 				)
 			})}

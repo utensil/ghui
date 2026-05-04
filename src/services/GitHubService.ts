@@ -15,18 +15,19 @@ import {
 	type ListIssuePageInput,
 	type ListPullRequestPageInput,
 	type Mergeable,
-	type PullRequestConversationItem,
+	type PullRequestComment,
 	type PullRequestItem,
 	type PullRequestMergeAction,
 	type PullRequestMergeInfo,
 	type PullRequestPage,
 	type PullRequestQueueMode,
 	type PullRequestReviewComment,
+	type RepositoryMergeMethods,
 	type ReviewStatus,
 	type CommitItem,
 	type SubmitPullRequestReviewInput,
 } from "../domain.js"
-import { getMergeActionDefinition } from "../mergeActions.js"
+import { mergeActionCliArgs } from "../mergeActions.js"
 import { CommandError, CommandRunner, type JsonParseError } from "./CommandRunner.js"
 
 const NullableString = Schema.NullOr(Schema.String)
@@ -166,6 +167,12 @@ const RepositoryIssuesResponseSchema = Schema.Struct({
 
 const ViewerSchema = Schema.Struct({ login: Schema.String })
 
+const RepositoryMergeMethodsResponseSchema = Schema.Struct({
+	squashMergeAllowed: Schema.Boolean,
+	mergeCommitAllowed: Schema.Boolean,
+	rebaseMergeAllowed: Schema.Boolean,
+})
+
 const MergeInfoResponseSchema = Schema.Struct({
 	number: Schema.Number,
 	title: Schema.String,
@@ -175,6 +182,14 @@ const MergeInfoResponseSchema = Schema.Struct({
 	reviewDecision: NullableString,
 	autoMergeRequest: Schema.NullOr(Schema.Unknown),
 	statusCheckRollup: Schema.Array(RawCheckContextSchema),
+})
+
+const PullRequestAdminMergeResponseSchema = Schema.Struct({
+	data: Schema.Struct({
+		repository: Schema.Struct({
+			pullRequest: Schema.NullOr(Schema.Struct({ viewerCanMergeAsAdmin: Schema.Boolean })),
+		}),
+	}),
 })
 
 const PullRequestCommentSchema = Schema.Struct({
@@ -195,6 +210,7 @@ const PullRequestCommentSchema = Schema.Struct({
 	line: OptionalNullableNumber,
 	original_line: OptionalNullableNumber,
 	side: Schema.optionalKey(Schema.NullOr(DiffCommentSide)),
+	in_reply_to_id: Schema.optionalKey(Schema.NullOr(Schema.Union([Schema.Number, Schema.String]))),
 })
 
 const PullRequestFileSchema = Schema.Struct({
@@ -708,8 +724,22 @@ const repositoryParts = (repository: string) => {
 	return owner && name ? { owner, name } : null
 }
 
+// Pull the numeric REST comment id out of the raw payload, falling back to the
+// URL (e.g. `/pulls/comments/123456789` or `#discussion_r123456789`) when the
+// `id` field itself is missing. The /replies endpoint only accepts the REST
+// integer id — node_id (`PRRC_…`) is a 404.
+const restCommentId = (comment: RawPullRequestComment): string | null => {
+	if (typeof comment.id === "number") return String(comment.id)
+	if (typeof comment.id === "string" && /^\d+$/.test(comment.id)) return comment.id
+	const fromApiUrl = comment.url?.match(/\/comments\/(\d+)/)?.[1]
+	if (fromApiUrl) return fromApiUrl
+	const fromHtmlUrl = comment.html_url?.match(/#(?:discussion_r|issuecomment-)(\d+)/)?.[1]
+	if (fromHtmlUrl) return fromHtmlUrl
+	return null
+}
+
 const rawCommentFields = (comment: RawPullRequestComment, fallbackId: string) => ({
-	id: String(comment.id ?? comment.node_id ?? fallbackId),
+	id: restCommentId(comment) ?? comment.node_id ?? fallbackId,
 	author: comment.user?.login ?? "unknown",
 	body: comment.body ?? "",
 	createdAt: comment.created_at ? new Date(comment.created_at) : null,
@@ -719,11 +749,13 @@ const rawCommentFields = (comment: RawPullRequestComment, fallbackId: string) =>
 const parsePullRequestComment = (comment: RawPullRequestComment): PullRequestReviewComment | null => {
 	const line = comment.line ?? comment.original_line
 	if (!comment.path || !line || (comment.side !== "LEFT" && comment.side !== "RIGHT")) return null
+	const inReplyTo = comment.in_reply_to_id != null ? String(comment.in_reply_to_id) : null
 	return {
 		...rawCommentFields(comment, `${comment.path}:${comment.side}:${line}:${comment.created_at ?? ""}:${comment.body ?? ""}`),
 		path: comment.path,
 		line,
 		side: comment.side,
+		inReplyTo,
 	}
 }
 
@@ -743,25 +775,24 @@ const parseIssueComment = (comment: RawIssueComment): IssueComment => ({
 	url: comment.html_url ?? comment.url ?? null,
 })
 
-const parseConversationComment = (comment: RawPullRequestComment): PullRequestConversationItem => ({
+const parseConversationComment = (comment: RawPullRequestComment): PullRequestComment => ({
 	_tag: "comment",
 	...rawCommentFields(comment, `${comment.created_at ?? ""}:${comment.body ?? ""}`),
 })
 
-const reviewCommentConversationItem = (comment: PullRequestReviewComment): PullRequestConversationItem => ({
+const reviewCommentAsComment = (comment: PullRequestReviewComment): PullRequestComment => ({
 	_tag: "review-comment",
 	...comment,
 })
 
-const conversationItemTime = (item: PullRequestConversationItem) => item.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER
+const commentTime = (item: PullRequestComment) => item.createdAt?.getTime() ?? Number.MAX_SAFE_INTEGER
 
-const sortConversationItems = (items: readonly PullRequestConversationItem[]) =>
-	[...items].sort((left, right) => conversationItemTime(left) - conversationItemTime(right) || left.id.localeCompare(right.id))
+const sortComments = (items: readonly PullRequestComment[]) => [...items].sort((left, right) => commentTime(left) - commentTime(right) || left.id.localeCompare(right.id))
 
 const parseIssueComments = (response: Schema.Schema.Type<typeof IssueCommentsResponseSchema>): readonly IssueComment[] =>
 	flattenSlurpedPages(response).map(parseIssueComment)
 
-const parseConversationItems = (response: Schema.Schema.Type<typeof CommentsResponseSchema>): readonly PullRequestConversationItem[] =>
+const parseConversationItems = (response: Schema.Schema.Type<typeof CommentsResponseSchema>): readonly PullRequestComment[] =>
 	flattenSlurpedPages(response).map(parseConversationComment)
 
 const flattenSlurpedPages = <Item>(response: readonly Item[] | readonly (readonly Item[])[]): readonly Item[] =>
@@ -915,6 +946,7 @@ const fallbackCreatedComment = (input: CreatePullRequestCommentInput): PullReque
 	body: input.body,
 	createdAt: new Date(),
 	url: null,
+	inReplyTo: null,
 })
 
 export type GitHubError = CommandError | JsonParseError | Schema.SchemaError
@@ -958,12 +990,15 @@ export class GitHubService extends Context.Service<
 		readonly listPullRequestCommits: (repository: string, number: number) => Effect.Effect<readonly CommitItem[], GitHubError>
 		readonly getCommitDiff: (repository: string, sha: string) => Effect.Effect<string, GitHubError>
 		readonly getPullRequestDiff: (repository: string, number: number) => Effect.Effect<string, GitHubError>
-		readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
-		readonly listPullRequestConversation: (repository: string, number: number) => Effect.Effect<readonly PullRequestConversationItem[], GitHubError>
+		readonly listPullRequestReviewComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestReviewComment[], GitHubError>
+		readonly listPullRequestComments: (repository: string, number: number) => Effect.Effect<readonly PullRequestComment[], GitHubError>
 		readonly getPullRequestMergeInfo: (repository: string, number: number) => Effect.Effect<PullRequestMergeInfo, GitHubError>
+		readonly getRepositoryMergeMethods: (repository: string) => Effect.Effect<RepositoryMergeMethods, GitHubError>
 		readonly mergePullRequest: (repository: string, number: number, action: PullRequestMergeAction) => Effect.Effect<void, CommandError>
 		readonly closePullRequest: (repository: string, number: number) => Effect.Effect<void, CommandError>
 		readonly createPullRequestComment: (input: CreatePullRequestCommentInput) => Effect.Effect<PullRequestReviewComment, GitHubError>
+		readonly createPullRequestIssueComment: (repository: string, number: number, body: string) => Effect.Effect<PullRequestComment, GitHubError>
+		readonly replyToReviewComment: (repository: string, number: number, inReplyTo: string, body: string) => Effect.Effect<PullRequestComment, GitHubError>
 		readonly submitPullRequestReview: (input: SubmitPullRequestReviewInput) => Effect.Effect<void, CommandError>
 		readonly toggleDraftStatus: (repository: string, number: number, isDraft: boolean) => Effect.Effect<void, CommandError>
 		readonly listRepoLabels: (repository: string) => Effect.Effect<readonly { readonly name: string; readonly color: string | null }[], GitHubError>
@@ -1243,8 +1278,8 @@ export class GitHubService extends Context.Service<
 					Effect.map((response) => pullRequestFilesToPatch(parsePullRequestFiles(response))),
 				)
 
-			const listPullRequestComments = (repository: string, number: number) =>
-				ghJson("listPullRequestComments", CommentsResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/comments`]).pipe(
+			const listPullRequestReviewComments = (repository: string, number: number) =>
+				ghJson("listPullRequestReviewComments", CommentsResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/pulls/${number}/comments`]).pipe(
 					Effect.map(parsePullRequestComments),
 				)
 
@@ -1253,22 +1288,22 @@ export class GitHubService extends Context.Service<
 					"api", "--paginate", "--slurp", `repos/${repository}/issues/${number}/comments`,
 				]).pipe(Effect.map(parseIssueComments))
 
-			const listPullRequestConversation = Effect.fn("GitHubService.listPullRequestConversation")(function* (repository: string, number: number) {
+			const listPullRequestComments = Effect.fn("GitHubService.listPullRequestComments")(function* (repository: string, number: number) {
 				const [issueComments, reviewComments] = yield* Effect.all(
 					[
 						ghJson("listPullRequestIssueComments", CommentsResponseSchema, ["api", "--paginate", "--slurp", `repos/${repository}/issues/${number}/comments`]).pipe(
 							Effect.map(parseConversationItems),
 						),
-						listPullRequestComments(repository, number).pipe(Effect.map((comments) => comments.map(reviewCommentConversationItem))),
+						listPullRequestReviewComments(repository, number).pipe(Effect.map((comments) => comments.map(reviewCommentAsComment))),
 					],
 					{ concurrency: "unbounded" },
 				)
 
-				return sortConversationItems([...issueComments, ...reviewComments])
+				return sortComments([...issueComments, ...reviewComments])
 			})
 
 			const getPullRequestMergeInfo = Effect.fn("GitHubService.getPullRequestMergeInfo")(function* (repository: string, number: number) {
-				const info = yield* command.runSchema(MergeInfoResponseSchema, "gh", [
+				const info = yield* ghJson("getPullRequestMergeInfo", MergeInfoResponseSchema, [
 					"pr",
 					"view",
 					String(number),
@@ -1278,6 +1313,21 @@ export class GitHubService extends Context.Service<
 					"number,title,state,isDraft,mergeable,reviewDecision,autoMergeRequest,statusCheckRollup",
 				])
 				const checkInfo = getCheckInfoFromContexts(info.statusCheckRollup)
+				const repo = repositoryParts(repository)
+				const adminInfo = repo
+					? yield* ghJson("getPullRequestAdminMergeInfo", PullRequestAdminMergeResponseSchema, [
+							"api",
+							"graphql",
+							"-F",
+							`owner=${repo.owner}`,
+							"-F",
+							`name=${repo.name}`,
+							"-F",
+							`number=${number}`,
+							"-f",
+							"query=query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { viewerCanMergeAsAdmin } } }",
+						])
+					: null
 
 				return {
 					repository,
@@ -1290,13 +1340,76 @@ export class GitHubService extends Context.Service<
 					checkStatus: checkInfo.checkStatus,
 					checkSummary: checkInfo.checkSummary,
 					autoMergeEnabled: info.autoMergeRequest !== null,
+					viewerCanMergeAsAdmin: adminInfo?.data.repository.pullRequest?.viewerCanMergeAsAdmin ?? false,
 				} satisfies PullRequestMergeInfo
 			})
 
+			const getRepositoryMergeMethods = Effect.fn("GitHubService.getRepositoryMergeMethods")(function* (repository: string) {
+				const response = yield* ghJson("getRepositoryMergeMethods", RepositoryMergeMethodsResponseSchema, [
+					"repo",
+					"view",
+					repository,
+					"--json",
+					"squashMergeAllowed,mergeCommitAllowed,rebaseMergeAllowed",
+				])
+				return {
+					squash: response.squashMergeAllowed,
+					merge: response.mergeCommitAllowed,
+					rebase: response.rebaseMergeAllowed,
+				} satisfies RepositoryMergeMethods
+			})
+
 			const mergePullRequest = (repository: string, number: number, action: PullRequestMergeAction) =>
-				ghVoid("mergePullRequest", ["pr", "merge", String(number), "--repo", repository, ...getMergeActionDefinition(action).cliArgs])
+				ghVoid("mergePullRequest", ["pr", "merge", String(number), "--repo", repository, ...mergeActionCliArgs(action)])
 
 			const closePullRequest = (repository: string, number: number) => ghVoid("closePullRequest", ["pr", "close", String(number), "--repo", repository])
+
+			const createPullRequestIssueComment = Effect.fn("GitHubService.createPullRequestIssueComment")(function* (repository: string, number: number, body: string) {
+				const response = yield* command.runSchema(IssueCommentSchema, "gh", [
+					"api",
+					"--method",
+					"POST",
+					`repos/${repository}/issues/${number}/comments`,
+					"-f",
+					`body=${body}`,
+				])
+				const parsed = parseIssueComment(response)
+				return {
+					_tag: "comment" as const,
+					id: parsed.id,
+					author: parsed.author,
+					body: parsed.body,
+					createdAt: parsed.createdAt,
+					url: parsed.url,
+				}
+			})
+
+			const replyToReviewComment = Effect.fn("GitHubService.replyToReviewComment")(function* (repository: string, number: number, inReplyTo: string, body: string) {
+				const response = yield* command.runSchema(PullRequestCommentSchema, "gh", [
+					"api",
+					"--method",
+					"POST",
+					`repos/${repository}/pulls/${number}/comments/${inReplyTo}/replies`,
+					"-f",
+					`body=${body}`,
+				])
+				const review = parsePullRequestComment(response)
+				if (!review) {
+					return {
+						_tag: "review-comment" as const,
+						id: `reply:${inReplyTo}:${Date.now()}`,
+						path: "",
+						line: 0,
+						side: "RIGHT" as const,
+						author: "you",
+						body,
+						createdAt: new Date(),
+						url: null,
+						inReplyTo,
+					}
+				}
+				return reviewCommentAsComment({ ...review, inReplyTo: review.inReplyTo ?? inReplyTo })
+			})
 
 			const createPullRequestComment = Effect.fn("GitHubService.createPullRequestComment")(function* (input: CreatePullRequestCommentInput) {
 				const response = yield* command.runSchema(PullRequestCommentSchema, "gh", [
@@ -1378,12 +1491,15 @@ export class GitHubService extends Context.Service<
 				listPullRequestCommits,
 				getCommitDiff,
 				getPullRequestDiff,
+				listPullRequestReviewComments,
 				listPullRequestComments,
-				listPullRequestConversation,
 				getPullRequestMergeInfo,
+				getRepositoryMergeMethods,
 				mergePullRequest,
 				closePullRequest,
 				createPullRequestComment,
+				createPullRequestIssueComment,
+				replyToReviewComment,
 				submitPullRequestReview,
 				toggleDraftStatus,
 				listRepoLabels,

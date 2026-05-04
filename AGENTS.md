@@ -11,7 +11,10 @@
 - Commit and push the version bump and consumed changesets to `main`.
 - Create a GitHub release named and tagged `v<package.json version>`.
 - Publishing to npm happens from GitHub Actions via trusted publishing; do not use an `NPM_TOKEN`.
-- The workflow verifies the release tag matches `package.json` and then runs `npm publish`.
+- The workflow verifies the release tag matches `package.json`, builds standalone binaries, runs `npm publish`, uploads release assets, and dispatches `kitlangton/homebrew-tap`.
+- Homebrew tap automation uses the `HOMEBREW_TAP_TOKEN` Actions secret on `kitlangton/ghui` to dispatch `kitlangton/homebrew-tap`.
+- `HOMEBREW_TAP_TOKEN` should be a fine-grained PAT owned by `kitlangton`, scoped only to `kitlangton/homebrew-tap`, with repository `Contents: Read and write`.
+- After releases, verify both the publish workflow and the tap dispatch workflow pass.
 
 ## Commands
 
@@ -26,15 +29,28 @@
 - Create release: `gh release create vX.Y.Z --target main --title "vX.Y.Z" --notes "..."`.
 - Check publish run: `gh run list --workflow publish.yml --limit 5`.
 - Check npm version: `npm view @kitlangton/ghui version`.
+- Check tap workflow: `gh run list --repo kitlangton/homebrew-tap --workflow update-ghui.yml --limit 5`.
+- Check Homebrew formula: `brew info kitlangton/tap/ghui`.
+- Test Homebrew install: `brew reinstall kitlangton/tap/ghui && /opt/homebrew/opt/ghui/bin/ghui --version`.
 
 ## Commit Readiness
 
 - Before committing or pushing code changes, run `bun run format:check`, `bun run typecheck`, `bun run lint`, and `bun run test`.
 - Before release commits, also run `bun run package:smoke`.
+- Before release commits, also run `bun run build:standalone`.
 - If formatting fails, run `bunx oxfmt src/ test/ dev/` or format only the touched files, then rerun `bun run format:check`.
 - CI enforces formatting with `bun run format:check`; do not rely on manual review to catch formatting drift.
+
+## UI Conventions
+
+- Modal dividers must connect to the side borders with junction characters (`├` / `┤`). When adding a horizontal divider inside a modal body, thread the divider's row index through `ModalFrame`'s `junctionRows` so the side bars render `├`/`┤` at that row instead of `│`. Inline `<Divider>`s without a corresponding junction row look detached and are wrong.
+
+## Plans
+
+Larger features and redesigns are captured in markdown under `plans/` before work starts. Each plan has Why / What / API mapping / Open questions / Status. When taking on something non-trivial, check `plans/` first; when sketching a future-direction idea, write a plan there rather than only mentioning it in chat or commits. See `plans/README.md` for the format and index.
 
 ## Future Work
 
 - Add a conversation panel focus/expand flow for reading and navigating longer PR conversations.
 - Consider click-drag support in diffs to select a comment range.
+- See `plans/` for tracked feature plans (e.g. queued PR reviews).

@@ -1,9 +1,20 @@
 import { TextAttributes } from "@opentui/core"
 import { Data } from "effect"
-import type { AuxiliaryItemAction, CommitItem, PullRequestLabel, PullRequestMergeInfo, PullRequestReviewComment, PullRequestReviewEvent } from "../domain.js"
-import { availableMergeActions } from "../mergeActions.js"
+import type {
+	AuxiliaryItemAction,
+	CommitItem,
+	PullRequestLabel,
+	PullRequestMergeInfo,
+	PullRequestMergeKind,
+	PullRequestMergeMethod,
+	PullRequestReviewComment,
+	PullRequestReviewEvent,
+	RepositoryMergeMethods,
+} from "../domain.js"
+import { allowedMergeMethodList } from "../domain.js"
+import { getMergeKindDefinition, mergeKindRowTitle, visibleMergeKinds } from "../mergeActions.js"
 import { clampCursor, commentEditorLines, cursorLineIndexForLines } from "./commentEditor.js"
-import { colors, filterThemeDefinitions, themeDefinitions, type ThemeId } from "./colors.js"
+import { colors, filterThemeDefinitions, oppositeThemeTone, themeDefinitions, type ThemeId, type ThemeTone } from "./colors.js"
 import { commentDisplayRows, CommentSegmentsLine, type CommentDisplayLine } from "./comments.js"
 import { diffFileStats, diffFileStatsText, type DiffFilePatch } from "./diff.js"
 import {
@@ -21,6 +32,8 @@ import {
 	StandardModal,
 	standardModalDims,
 	TextLine,
+	TokenLine,
+	type Token,
 } from "./primitives.js"
 import { labelColor, shortRepoName } from "./pullRequests.js"
 
@@ -40,6 +53,9 @@ export interface MergeModalState {
 	readonly running: boolean
 	readonly info: PullRequestMergeInfo | null
 	readonly error: string | null
+	readonly selectedMethod: PullRequestMergeMethod
+	readonly allowedMethods: RepositoryMergeMethods | null
+	readonly pendingConfirm: { readonly kind: PullRequestMergeKind; readonly method: PullRequestMergeMethod } | null
 }
 
 export interface CloseModalState {
@@ -65,10 +81,24 @@ export interface ConfirmActionModalState {
 	readonly error: string | null
 }
 
+export interface PullRequestStateModalState {
+	readonly repository: string | null
+	readonly number: number | null
+	readonly title: string
+	readonly url: string | null
+	readonly isDraft: boolean
+	readonly selectedIsDraft: boolean
+	readonly running: boolean
+	readonly error: string | null
+}
+
+export type CommentModalTarget = { readonly kind: "diff" } | { readonly kind: "issue" } | { readonly kind: "reply"; readonly inReplyTo: string; readonly anchorLabel: string }
+
 export interface CommentModalState {
 	readonly body: string
 	readonly cursor: number
 	readonly error: string | null
+	readonly target: CommentModalTarget
 }
 
 export interface CommentThreadModalState {
@@ -94,6 +124,7 @@ export interface SubmitReviewModalState {
 export interface ThemeModalState {
 	readonly query: string
 	readonly filterMode: boolean
+	readonly tone: ThemeTone
 	readonly initialThemeId: ThemeId
 }
 
@@ -315,6 +346,9 @@ export const initialMergeModalState: MergeModalState = {
 	running: false,
 	info: null,
 	error: null,
+	selectedMethod: "squash",
+	allowedMethods: null,
+	pendingConfirm: null,
 }
 
 export const initialCloseModalState: CloseModalState = {
@@ -340,10 +374,22 @@ export const initialConfirmActionModalState: ConfirmActionModalState = {
 	error: null,
 }
 
+export const initialPullRequestStateModalState: PullRequestStateModalState = {
+	repository: null,
+	number: null,
+	title: "",
+	url: null,
+	isDraft: false,
+	selectedIsDraft: true,
+	running: false,
+	error: null,
+}
+
 export const initialCommentModalState: CommentModalState = {
 	body: "",
 	cursor: 0,
 	error: null,
+	target: { kind: "diff" },
 }
 
 export const initialCommentThreadModalState: CommentThreadModalState = {
@@ -369,6 +415,7 @@ export const initialSubmitReviewModalState: SubmitReviewModalState = {
 export const initialThemeModalState: ThemeModalState = {
 	query: "",
 	filterMode: false,
+	tone: "dark",
 	initialThemeId: "ghui",
 }
 
@@ -393,6 +440,7 @@ export type Modal = Data.TaggedEnum<{
 	Label: LabelModalState
 	Close: CloseModalState
 	ConfirmAction: ConfirmActionModalState
+	PullRequestState: PullRequestStateModalState
 	Merge: MergeModalState
 	Comment: CommentModalState
 	CommentThread: CommentThreadModalState
@@ -414,6 +462,7 @@ export const modalInitialStates = {
 	Label: initialLabelModalState,
 	Close: initialCloseModalState,
 	ConfirmAction: initialConfirmActionModalState,
+	PullRequestState: initialPullRequestStateModalState,
 	Merge: initialMergeModalState,
 	Comment: initialCommentModalState,
 	CommentThread: initialCommentThreadModalState,
@@ -479,8 +528,14 @@ export const OpenRepositoryModal = ({
 const mergeUnavailableReason = (info: PullRequestMergeInfo | null) => {
 	if (!info) return "Loading merge status from GitHub."
 	if (info.state !== "open") return "This pull request is not open."
-	if (info.isDraft) return "Draft pull requests cannot be merged."
+	// Check the real blockers first; draft alone is recoverable via mark-ready, so
+	// it's only the message of last resort.
 	if (info.mergeable === "conflicting") return "This branch has merge conflicts."
+	if (info.checkStatus === "failing") return "Required checks are failing."
+	if (info.checkStatus === "pending") return "Required checks are still running."
+	if (info.reviewStatus === "changes") return "Reviewer has requested changes."
+	if (info.reviewStatus === "review") return "Awaiting required review."
+	if (info.isDraft) return "Draft pull requests cannot be merged."
 	return "No merge actions are currently available."
 }
 
@@ -649,6 +704,34 @@ export const ChangedFilesModal = ({
 	)
 }
 
+const MethodStripLine = ({ allowed, selected }: { allowed: RepositoryMergeMethods; selected: PullRequestMergeMethod }) => {
+	const tokens: Token[] = allowedMergeMethodList(allowed).map((method) =>
+		method === selected ? { text: ` ${method} `, fg: colors.selectedText, bg: colors.selectedBg, bold: true } : { text: ` ${method} `, fg: colors.muted },
+	)
+	return <TokenLine tokens={tokens} separator="" />
+}
+
+const CHECK_STATUS_FG = {
+	failing: colors.status.failing,
+	pending: colors.status.pending,
+	passing: colors.status.passing,
+	none: colors.muted,
+} as const satisfies Record<PullRequestMergeInfo["checkStatus"], string>
+
+const buildStatusBadges = (info: PullRequestMergeInfo | null, repo: string | null): readonly Token[] => {
+	if (info) {
+		const tokens: Token[] = [{ text: shortRepoName(info.repository), fg: colors.muted }]
+		if (info.mergeable === "conflicting") tokens.push({ text: "conflicting", fg: colors.error })
+		if (info.isDraft) tokens.push({ text: "draft", fg: colors.status.draft })
+		if (info.reviewStatus === "changes") tokens.push({ text: "changes requested", fg: colors.status.changes })
+		if (info.reviewStatus === "review") tokens.push({ text: "review pending", fg: colors.status.review })
+		if (info.reviewStatus === "approved" && !info.isDraft) tokens.push({ text: "approved", fg: colors.status.approved })
+		if (info.checkStatus !== "none") tokens.push({ text: `checks ${info.checkSummary ?? info.checkStatus}`, fg: CHECK_STATUS_FG[info.checkStatus] })
+		return tokens
+	}
+	return repo ? [{ text: shortRepoName(repo), fg: colors.muted }] : []
+}
+
 export const MergeModal = ({
 	state,
 	modalWidth,
@@ -664,21 +747,96 @@ export const MergeModal = ({
 	offsetTop: number
 	loadingIndicator: string
 }) => {
-	const { contentWidth, bodyHeight: optionAreaHeight, rowWidth } = standardModalDims(modalWidth, modalHeight)
-	const options = availableMergeActions(state.info)
-	const selectedIndex = options.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, options.length - 1))
-	const title = state.info ? `Merge  #${state.info.number}` : state.number ? `Merge  #${state.number}` : "Merge"
-	const rightText = state.running ? `${loadingIndicator} running` : state.loading ? `${loadingIndicator} loading` : state.info?.autoMergeEnabled ? "auto on" : "manual"
+	const allowedMethods = state.allowedMethods
+	const allowedMethodCount = allowedMethods ? allowedMergeMethodList(allowedMethods).length : 0
+	const methodsLoaded = allowedMethods !== null
+	const isLoading = state.loading || !methodsLoaded
+	const showStrip = allowedMethodCount > 1
+	const { rowWidth, bodyHeight: optionAreaHeight } = standardModalDims(modalWidth, modalHeight, showStrip)
+	const kinds = visibleMergeKinds(state.info, allowedMethods, state.selectedMethod)
+	const selectedIndex = kinds.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, kinds.length - 1))
+	const title = state.info ? `Merge #${state.info.number}` : state.number ? `Merge #${state.number}` : "Merge"
+	const rightText = state.running ? `${loadingIndicator} running` : isLoading ? `${loadingIndicator} loading` : state.info?.autoMergeEnabled ? "auto on" : "manual"
 	const repo = state.info?.repository ?? state.repository
-	const statusLine = state.info
-		? `${shortRepoName(state.info.repository)}  ${state.info.mergeable}  ${state.info.reviewStatus}  ${state.info.checkSummary ?? state.info.checkStatus}`
-		: repo
-			? shortRepoName(repo)
-			: ""
+	const statusBadges = buildStatusBadges(state.info, repo)
 	const optionRows = Math.max(1, Math.floor(optionAreaHeight / 2))
-	const visibleOptions = options.slice(0, optionRows)
-	const loadingTopRows = Math.max(0, Math.floor((optionAreaHeight - 1) / 2))
-	const loadingBottomRows = Math.max(0, optionAreaHeight - loadingTopRows - 1)
+	const scrollStart = Math.min(Math.max(0, kinds.length - optionRows), Math.max(0, selectedIndex - optionRows + 1))
+	const visibleOptions = kinds.slice(scrollStart, scrollStart + optionRows)
+	const fromDraft = Boolean(state.info?.isDraft)
+	const inConfirmMode = state.pendingConfirm !== null
+	const messageTopRows = Math.max(0, Math.floor((optionAreaHeight - 1) / 2))
+	const messageBottomRows = Math.max(0, optionAreaHeight - messageTopRows - 1)
+	const canConfirm = kinds.length > 0 && !state.error && !isLoading
+	const footerItems = inConfirmMode
+		? [
+				{ key: "enter", label: "confirm" },
+				{ key: "esc", label: "back" },
+			]
+		: [
+				{ key: "↑↓", label: "move", disabled: kinds.length === 0 },
+				...(showStrip ? [{ key: "←→", label: "method" }] : []),
+				{ key: "enter", label: "confirm", disabled: !canConfirm },
+				{ key: "esc", label: "close" },
+				{ key: `${selectedIndex + 1}/${kinds.length}`, label: "", when: kinds.length > optionRows, keyFg: colors.muted },
+			]
+
+	const renderCenteredMessage = (text: string, fg: string) => (
+		<>
+			<Filler rows={messageTopRows} prefix="top" />
+			<PlainLine text={centerCell(text, rowWidth)} fg={fg} />
+			<Filler rows={messageBottomRows} prefix="bottom" />
+		</>
+	)
+
+	const renderCenteredLines = (lines: readonly { readonly text: string; readonly fg: string; readonly bold?: boolean }[]) => {
+		const top = Math.max(0, Math.floor((optionAreaHeight - lines.length) / 2))
+		const bottom = Math.max(0, optionAreaHeight - top - lines.length)
+		return (
+			<>
+				<Filler rows={top} prefix="top" />
+				{lines.map((line, idx) => (
+					<TextLine key={idx}>
+						<span fg={line.fg} attributes={line.bold ? TextAttributes.BOLD : 0}>
+							{centerCell(line.text, rowWidth)}
+						</span>
+					</TextLine>
+				))}
+				<Filler rows={bottom} prefix="bottom" />
+			</>
+		)
+	}
+
+	const renderBody = () => {
+		if (state.error) return renderCenteredMessage(state.error, colors.error)
+		if (isLoading) return renderCenteredMessage(`${loadingIndicator} ${state.loading ? "Loading merge status" : "Loading merge methods"}`, colors.muted)
+		if (state.pendingConfirm && state.info) {
+			const kindDef = getMergeKindDefinition(state.pendingConfirm.kind)
+			const action = kindDef.title(state.pendingConfirm.method)
+			const lowered = action.charAt(0).toLowerCase() + action.slice(1)
+			return renderCenteredLines([
+				{ text: `Mark #${state.info.number} ready for review`, fg: colors.text, bold: true },
+				{ text: `and ${lowered}?`, fg: colors.text },
+			])
+		}
+		if (visibleOptions.length === 0) return renderCenteredMessage(mergeUnavailableReason(state.info), colors.muted)
+		return visibleOptions.map((kind, index) => {
+			const actualIndex = scrollStart + index
+			const isSelected = actualIndex === selectedIndex
+			const titleColor = kind.danger ? colors.error : isSelected ? colors.selectedText : colors.text
+			const cellWidth = Math.max(1, rowWidth - 1)
+			const rowTitle = mergeKindRowTitle(kind, state.selectedMethod, fromDraft)
+			return (
+				<box key={kind.kind} height={2} flexDirection="column">
+					<TextLine bg={isSelected ? colors.selectedBg : undefined}>
+						<span fg={titleColor}> {fitCell(rowTitle, cellWidth)}</span>
+					</TextLine>
+					<TextLine bg={isSelected ? colors.selectedBg : undefined}>
+						<span fg={colors.muted}> {fitCell(kind.description(state.selectedMethod), cellWidth)}</span>
+					</TextLine>
+				</box>
+			)
+		})
+	}
 
 	return (
 		<StandardModal
@@ -687,47 +845,12 @@ export const MergeModal = ({
 			width={modalWidth}
 			height={modalHeight}
 			title={title}
-			headerRight={{ text: rightText, pending: state.running || state.loading }}
-			subtitle={<PlainLine text={fitCell(statusLine, contentWidth)} fg={colors.muted} />}
-			footer={
-				<HintRow
-					items={[
-						{ key: "↑↓", label: "move" },
-						{ key: "enter", label: "confirm" },
-						{ key: "esc", label: "close" },
-					]}
-				/>
-			}
+			headerRight={{ text: rightText, pending: state.running || isLoading }}
+			subtitle={<TokenLine tokens={statusBadges} />}
+			middleRow={showStrip && allowedMethods ? <MethodStripLine allowed={allowedMethods} selected={state.selectedMethod} /> : undefined}
+			footer={<HintRow items={footerItems} />}
 		>
-			{state.loading ? (
-				<>
-					<Filler rows={loadingTopRows} prefix="top" />
-					<PlainLine text={centerCell(`${loadingIndicator} Loading merge status`, rowWidth)} fg={colors.muted} />
-					<Filler rows={loadingBottomRows} prefix="bottom" />
-				</>
-			) : state.error ? (
-				<PlainLine text={centerCell(state.error, rowWidth)} fg={colors.error} />
-			) : visibleOptions.length === 0 ? (
-				<PlainLine text={centerCell(mergeUnavailableReason(state.info), rowWidth)} fg={colors.muted} />
-			) : (
-				visibleOptions.map((option, index) => {
-					const isSelected = index === selectedIndex
-					const titleColor = option.danger ? colors.error : isSelected ? colors.selectedText : colors.text
-					const titleWidth = Math.max(1, rowWidth - 1)
-					const descriptionWidth = Math.max(1, rowWidth - 1)
-
-					return (
-						<box key={option.action} height={2} flexDirection="column">
-							<TextLine bg={isSelected ? colors.selectedBg : undefined}>
-								<span fg={titleColor}> {fitCell(option.title, titleWidth)}</span>
-							</TextLine>
-							<TextLine bg={isSelected ? colors.selectedBg : undefined}>
-								<span fg={colors.muted}> {fitCell(option.description, descriptionWidth)}</span>
-							</TextLine>
-						</box>
-					)
-				})
-			)}
+			{renderBody()}
 		</StandardModal>
 	)
 }
@@ -827,6 +950,75 @@ export const ConfirmActionModal = ({
 					{titleLines.map((line, index) => (
 						<PlainLine key={index} text={line} fg={index === 0 && repo ? colors.muted : colors.text} bold={index === titleLines.length - 1} />
 					))}
+					<Filler rows={bottomRows} prefix="bottom" />
+				</>
+			)}
+		</StandardModal>
+	)
+}
+
+export const PullRequestStateModal = ({
+	state,
+	modalWidth,
+	modalHeight,
+	offsetLeft,
+	offsetTop,
+	loadingIndicator,
+}: {
+	state: PullRequestStateModalState
+	modalWidth: number
+	modalHeight: number
+	offsetLeft: number
+	offsetTop: number
+	loadingIndicator: string
+}) => {
+	const { contentWidth, bodyHeight } = standardModalDims(modalWidth, modalHeight)
+	const title = "Pull Request State"
+	const options = [
+		{ isDraft: true, label: "Draft" },
+		{ isDraft: false, label: "Ready for review" },
+	] as const
+	const headerRight = state.running ? { text: `${loadingIndicator} updating`, pending: true } : null
+	const bottomRows = Math.max(0, bodyHeight - options.length)
+
+	return (
+		<StandardModal
+			left={offsetLeft}
+			top={offsetTop}
+			width={modalWidth}
+			height={modalHeight}
+			title={title}
+			{...(headerRight ? { headerRight } : {})}
+			subtitle={<PlainLine text={fitCell("Select the desired state for this PR.", contentWidth)} fg={colors.muted} />}
+			bodyPadding={1}
+			footer={
+				<HintRow
+					items={[
+						{ key: "↑↓", label: "choose" },
+						{ key: "enter", label: "apply" },
+						{ key: "esc", label: "cancel" },
+					]}
+				/>
+			}
+		>
+			{state.error ? (
+				<PlainLine text={fitCell(state.error, contentWidth)} fg={colors.error} />
+			) : (
+				<>
+					{options.map((option) => {
+						const isSelected = option.isDraft === state.selectedIsDraft
+						const isCurrent = option.isDraft === state.isDraft
+						const marker = isSelected ? "›" : " "
+						const stateMarker = isCurrent ? "●" : "○"
+						const labelWidth = Math.max(1, contentWidth - marker.length - stateMarker.length - 3)
+						return (
+							<TextLine key={option.label} bg={isSelected ? colors.selectedBg : undefined} fg={isSelected ? colors.selectedText : colors.text}>
+								<span fg={isSelected ? colors.count : colors.muted}>{marker}</span>
+								<span fg={isCurrent ? colors.count : colors.muted}> {stateMarker}</span>
+								{isCurrent ? <span attributes={TextAttributes.BOLD}> {fitCell(option.label, labelWidth)}</span> : <span> {fitCell(option.label, labelWidth)}</span>}
+							</TextLine>
+						)
+					})}
 					<Filler rows={bottomRows} prefix="bottom" />
 				</>
 			)}
@@ -1103,7 +1295,7 @@ export const ThemeModal = ({
 	offsetTop: number
 }) => {
 	const { contentWidth, bodyHeight: maxVisible, rowWidth } = standardModalDims(modalWidth, modalHeight)
-	const filteredThemes = filterThemeDefinitions(state.query)
+	const filteredThemes = filterThemeDefinitions(state.query, state.tone)
 	const activeIndex = filteredThemes.findIndex((theme) => theme.id === activeThemeId)
 	const selectedIndex = Math.max(0, activeIndex)
 	const selectedTheme = filteredThemes[selectedIndex] ?? themeDefinitions.find((theme) => theme.id === activeThemeId) ?? themeDefinitions[0]!
@@ -1115,6 +1307,8 @@ export const ThemeModal = ({
 	const subtitleWidth = Math.max(1, contentWidth - (state.filterMode ? queryPrefix.length : 0))
 	const messageTopRows = Math.max(0, Math.floor((maxVisible - 1) / 2))
 	const messageBottomRows = Math.max(0, maxVisible - messageTopRows - 1)
+	const toneLabel = state.tone === "dark" ? "Dark" : "Light"
+	const nextToneLabel = oppositeThemeTone(state.tone)
 
 	return (
 		<StandardModal
@@ -1122,7 +1316,7 @@ export const ThemeModal = ({
 			top={offsetTop}
 			width={modalWidth}
 			height={modalHeight}
-			title="Themes"
+			title={`${toneLabel} Themes`}
 			headerRight={{ text: countText }}
 			subtitle={
 				state.filterMode ? (
@@ -1137,8 +1331,7 @@ export const ThemeModal = ({
 			footer={
 				<HintRow
 					items={[
-						{ key: "↑↓", label: "preview" },
-						{ key: "/", label: "filter" },
+						{ key: "tab", label: `${nextToneLabel} mode` },
 						{ key: "enter", label: "select" },
 						{ key: "esc", label: "cancel" },
 					]}

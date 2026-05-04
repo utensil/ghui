@@ -6,6 +6,7 @@ export interface ThemeModalCtx {
 	readonly closeWithoutSaving: () => void
 	readonly clearFilter: () => void
 	readonly enterFilterMode: () => void
+	readonly toggleTone: () => void
 	readonly confirmSelection: () => void
 	readonly moveSelection: (delta: -1 | 1) => void
 }
@@ -23,11 +24,12 @@ export const themeModalKeymap = Theme(
 		},
 	},
 	{ id: "theme-modal.filter", title: "Filter themes", keys: ["/"], run: (s) => s.enterFilterMode() },
+	{ id: "theme-modal.toggle-tone", title: "Toggle light/dark themes", keys: ["tab"], run: (s) => s.toggleTone() },
 	{
 		id: "theme-modal.confirm",
 		title: "Apply theme",
 		keys: ["return"],
-		enabled: (s) => (s.filterMode && !s.hasFilteredResults ? "No matching themes." : true),
+		enabled: (s) => (!s.hasFilteredResults ? "No matching themes." : true),
 		run: (s) => s.confirmSelection(),
 	},
 	{ id: "theme-modal.up-arrow", title: "Up", keys: ["up", "ctrl+p", "ctrl+k"], run: (s) => s.moveSelection(-1) },

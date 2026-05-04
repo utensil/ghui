@@ -1,13 +1,20 @@
-import { TextAttributes } from "@opentui/core"
-import { Fragment, useMemo } from "react"
+import { TextAttributes, type BoxRenderable, type MouseEvent } from "@opentui/core"
+import { useRenderer } from "@opentui/react"
+import { Fragment, useEffect, useMemo, useState } from "react"
 import { formatRelativeDate } from "../date.js"
-import type { CheckItem, PullRequestConversationItem, PullRequestItem } from "../domain.js"
+import type { CheckItem, PullRequestComment, PullRequestItem } from "../domain.js"
 import { colors, type ThemeId } from "./colors.js"
 import { commentCountText, commentDisplayRows, CommentSegmentsLine, type CommentSegment } from "./comments.js"
 import { diffStatText } from "./diff.js"
 import { DiffStats } from "./diffStats.js"
+import { collectUrlPositions, findUrlAt, inlineSegments, type InlinePalette } from "./inlineSegments.js"
 import { centerCell, Divider, Filler, fitCell, PaddedRow, PlainLine, TextLine } from "./primitives.js"
 import { labelColor, labelTextColor, reviewLabel, shortRepoName, statusColor } from "./pullRequests.js"
+
+const inlinePalette = (): InlinePalette => ({ text: colors.text, inlineCode: colors.inlineCode, link: colors.link, count: colors.count })
+
+// Pixel-column conversion accounts for the body box's paddingLeft={1}.
+const BODY_PADDING_LEFT = 1
 
 interface PreviewLine {
 	readonly divider?: boolean
@@ -23,9 +30,8 @@ export const DETAIL_BODY_LINES = 6
 export const DETAIL_PLACEHOLDER_ROWS = 4
 export const DETAIL_BODY_SCROLL_LIMIT = 1_000
 
-export type DetailConversationStatus = "idle" | "loading" | "ready"
+export type DetailCommentsStatus = "idle" | "loading" | "ready"
 
-const pullRequestReferencePattern = /(#[0-9]+)/g
 const codeFencePattern = /^```\s*([a-zA-Z0-9_-]+)?/
 const codeTokenPattern =
 	/(\/\/.*|`(?:\\.|[^`])*`|"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|\b(?:async|await|break|case|catch|class|const|continue|default|else|export|extends|finally|for|from|function|if|import|interface|let|new|return|switch|throw|try|type|var|while|yield)\b|\b(?:true|false|null|undefined)\b|\b\d+(?:\.\d+)?\b)/g
@@ -49,23 +55,7 @@ export const wrapText = (text: string, width: number): string[] => {
 	return lines.length > 0 ? lines : [""]
 }
 
-const parseInlineSegments = (text: string, fg: string, bold = false): PreviewLine["segments"] => {
-	const parts = text.split(/(`[^`]+`)/g).filter((part) => part.length > 0)
-	return parts.flatMap((part) => {
-		if (part.startsWith("`") && part.endsWith("`")) {
-			return [{ text: part.slice(1, -1), fg: colors.inlineCode, bold }]
-		}
-
-		return part
-			.split(pullRequestReferencePattern)
-			.filter((segment) => segment.length > 0)
-			.map((segment) => ({
-				text: segment,
-				fg: segment.match(/^#[0-9]+$/) ? colors.count : fg,
-				bold,
-			}))
-	})
-}
+const parseInlineSegments = (text: string, fg: string, bold = false): readonly CommentSegment[] => inlineSegments(text, fg, bold, inlinePalette())
 
 const parseCodeSegments = (text: string): PreviewLine["segments"] => {
 	const segments: Array<PreviewLine["segments"][number]> = []
@@ -226,7 +216,7 @@ export const truncateConversationPath = (path: string, width: number) => {
 	return `${prefix}/…/${truncateFromStart(parts[parts.length - 1]!, suffixWidth)}`
 }
 
-const conversationItemGroups = (item: PullRequestConversationItem, width: number): readonly (readonly CommentSegment[])[] => {
+const commentGroups = (item: PullRequestComment, width: number): readonly (readonly CommentSegment[])[] => {
 	if (item._tag !== "review-comment") return []
 	const pathWidth = Math.max(12, width - item.author.length - 20)
 	return [[{ text: truncateConversationPath(item.path, pathWidth), fg: colors.inlineCode }]]
@@ -238,14 +228,14 @@ const conversationPreview = ({
 	width,
 	limit,
 }: {
-	readonly items: readonly PullRequestConversationItem[]
-	readonly status: DetailConversationStatus
+	readonly items: readonly PullRequestComment[]
+	readonly status: DetailCommentsStatus
 	readonly width: number
 	readonly limit: number
 }): Array<PreviewLine> => {
 	if (status !== "ready" || items.length === 0 || limit <= 0) return []
 	const rows: Array<PreviewLine> = []
-	const title = "Conversation"
+	const title = "Comments"
 	const countText = commentCountText(items.length)
 	const gap = Math.max(2, width - title.length - countText.length)
 	rows.push({
@@ -258,7 +248,7 @@ const conversationPreview = ({
 
 	for (const item of items) {
 		if (rows.length >= limit) break
-		rows.push(...commentDisplayRows({ item, width, groups: conversationItemGroups(item, width) }).slice(0, limit - rows.length))
+		rows.push(...commentDisplayRows({ item, width, groups: commentGroups(item, width) }).slice(0, limit - rows.length))
 	}
 
 	return rows.slice(0, limit)
@@ -268,19 +258,19 @@ const detailBodyPreview = ({
 	pullRequest,
 	contentWidth,
 	limit,
-	conversationItems,
-	conversationStatus,
+	comments,
+	commentsStatus,
 }: {
 	readonly pullRequest: PullRequestItem
 	readonly contentWidth: number
 	readonly limit: number
-	readonly conversationItems: readonly PullRequestConversationItem[]
-	readonly conversationStatus: DetailConversationStatus
+	readonly comments: readonly PullRequestComment[]
+	readonly commentsStatus: DetailCommentsStatus
 }) => {
 	const summaryRows = bodyPreview(pullRequest.body, contentWidth, limit)
 	const conversationRows = conversationPreview({
-		items: conversationItems,
-		status: conversationStatus,
+		items: comments,
+		status: commentsStatus,
 		width: contentWidth,
 		limit: Math.max(0, limit - summaryRows.length - 1),
 	})
@@ -371,16 +361,9 @@ const ChecksSection = ({ checks, contentWidth }: { checks: readonly CheckItem[];
 	)
 }
 
-const conversationDividerBodyRow = (
-	pullRequest: PullRequestItem,
-	contentWidth: number,
-	conversationItems: readonly PullRequestConversationItem[],
-	conversationStatus: DetailConversationStatus,
-) => {
+const conversationDividerBodyRow = (pullRequest: PullRequestItem, contentWidth: number, comments: readonly PullRequestComment[], commentsStatus: DetailCommentsStatus) => {
 	if (!pullRequest.detailLoaded) return null
-	const dividerIndex = detailBodyPreview({ pullRequest, contentWidth, limit: DETAIL_BODY_SCROLL_LIMIT, conversationItems, conversationStatus }).findIndex(
-		(line) => line.divider === true,
-	)
+	const dividerIndex = detailBodyPreview({ pullRequest, contentWidth, limit: DETAIL_BODY_SCROLL_LIMIT, comments, commentsStatus }).findIndex((line) => line.divider === true)
 	return dividerIndex >= 0 ? dividerIndex : null
 }
 
@@ -389,8 +372,8 @@ export const getDetailJunctionRows = ({
 	paneWidth,
 	showChecks = false,
 	contentWidth,
-	conversationItems = [],
-	conversationStatus = "idle",
+	comments = [],
+	commentsStatus = "idle",
 	bodyScrollTop = 0,
 	bodyViewportHeight = Number.POSITIVE_INFINITY,
 }: {
@@ -398,8 +381,8 @@ export const getDetailJunctionRows = ({
 	readonly paneWidth: number
 	readonly showChecks?: boolean
 	readonly contentWidth?: number
-	readonly conversationItems?: readonly PullRequestConversationItem[]
-	readonly conversationStatus?: DetailConversationStatus
+	readonly comments?: readonly PullRequestComment[]
+	readonly commentsStatus?: DetailCommentsStatus
 	readonly bodyScrollTop?: number
 	readonly bodyViewportHeight?: number
 }): readonly number[] => {
@@ -410,7 +393,7 @@ export const getDetailJunctionRows = ({
 	const checks = deduplicateChecks(pullRequest.checks)
 	const checksDividerRow = checks.length > 0 ? detailDividerRow + 1 + checksRowCount(checks) + 1 : -1
 	const headerHeight = getDetailHeaderHeight(pullRequest, paneWidth, showChecks)
-	const conversationDivider = conversationDividerBodyRow(pullRequest, resolvedContentWidth, conversationItems, conversationStatus)
+	const conversationDivider = conversationDividerBodyRow(pullRequest, resolvedContentWidth, comments, commentsStatus)
 	const visibleConversationDivider = conversationDivider === null ? null : conversationDivider - Math.max(0, Math.floor(bodyScrollTop))
 	return [
 		detailDividerRow,
@@ -431,21 +414,21 @@ export const getDetailBodyHeight = (
 	pullRequest: PullRequestItem | null,
 	contentWidth: number,
 	bodyLines = DETAIL_BODY_LINES,
-	conversationItems: readonly PullRequestConversationItem[] = [],
-	conversationStatus: DetailConversationStatus = "idle",
+	comments: readonly PullRequestComment[] = [],
+	commentsStatus: DetailCommentsStatus = "idle",
 ) => {
 	if (!pullRequest) return bodyLines
 	if (!pullRequest.detailLoaded) return bodyLines
-	return detailBodyPreview({ pullRequest, contentWidth, limit: bodyLines, conversationItems, conversationStatus }).length
+	return detailBodyPreview({ pullRequest, contentWidth, limit: bodyLines, comments, commentsStatus }).length
 }
 
 export const getScrollableDetailBodyHeight = (
 	pullRequest: PullRequestItem | null,
 	contentWidth: number,
-	conversationItems: readonly PullRequestConversationItem[] = [],
-	conversationStatus: DetailConversationStatus = "idle",
+	comments: readonly PullRequestComment[] = [],
+	commentsStatus: DetailCommentsStatus = "idle",
 ) => {
-	return getDetailBodyHeight(pullRequest, contentWidth, DETAIL_BODY_SCROLL_LIMIT, conversationItems, conversationStatus)
+	return getDetailBodyHeight(pullRequest, contentWidth, DETAIL_BODY_SCROLL_LIMIT, comments, commentsStatus)
 }
 
 export const getDetailsPaneHeight = ({
@@ -454,19 +437,19 @@ export const getDetailsPaneHeight = ({
 	bodyLines = DETAIL_BODY_LINES,
 	paneWidth = contentWidth + 2,
 	showChecks = false,
-	conversationItems = [],
-	conversationStatus = "idle",
+	comments = [],
+	commentsStatus = "idle",
 }: {
 	pullRequest: PullRequestItem | null
 	contentWidth: number
 	bodyLines?: number
 	paneWidth?: number
 	showChecks?: boolean
-	conversationItems?: readonly PullRequestConversationItem[]
-	conversationStatus?: DetailConversationStatus
+	comments?: readonly PullRequestComment[]
+	commentsStatus?: DetailCommentsStatus
 }) =>
 	pullRequest
-		? getDetailHeaderHeight(pullRequest, paneWidth, showChecks) + getDetailBodyHeight(pullRequest, contentWidth, bodyLines, conversationItems, conversationStatus)
+		? getDetailHeaderHeight(pullRequest, paneWidth, showChecks) + getDetailBodyHeight(pullRequest, contentWidth, bodyLines, comments, commentsStatus)
 		: bodyLines + DETAIL_PLACEHOLDER_ROWS + 1
 
 export const DetailHeader = ({
@@ -487,7 +470,7 @@ export const DetailHeader = ({
 	const unique = deduplicateChecks(pullRequest.checks)
 	const checkRows = checksRowCount(unique)
 	const statsText = diffStatText(pullRequest)
-	const labelsWidth = !pullRequest.detailLoaded ? "loading details...".length : labels.reduce((total, label, index) => total + label.name.length + 2 + (index > 0 ? 1 : 0), 0)
+	const labelsWidth = pullRequest.detailLoaded ? labels.reduce((total, label, index) => total + label.name.length + 2 + (index > 0 ? 1 : 0), 0) : 0
 	const hasLabelContent = labelsWidth > 0
 	const showStats = contentWidth - labelsWidth - statsText.length >= (hasLabelContent ? 2 : 0)
 	const statsGap = Math.max(hasLabelContent ? 2 : 0, contentWidth - labelsWidth - statsText.length)
@@ -524,19 +507,17 @@ export const DetailHeader = ({
 			</box>
 			<PaddedRow>
 				<TextLine>
-					{!pullRequest.detailLoaded ? (
-						<span fg={colors.muted}>loading details...</span>
-					) : labels.length > 0 ? (
-						labels.map((label, index) => (
-							<Fragment key={label.name}>
-								{index > 0 ? <span fg={colors.muted}> </span> : null}
-								<span bg={labelColor(label)} fg={labelTextColor(labelColor(label))}>
-									{" "}
-									{label.name}{" "}
-								</span>
-							</Fragment>
-						))
-					) : null}
+					{pullRequest.detailLoaded && labels.length > 0
+						? labels.map((label, index) => (
+								<Fragment key={label.name}>
+									{index > 0 ? <span fg={colors.muted}> </span> : null}
+									<span bg={labelColor(label)} fg={labelTextColor(labelColor(label))}>
+										{" "}
+										{label.name}{" "}
+									</span>
+								</Fragment>
+							))
+						: null}
 					{showStats ? (
 						<>
 							{statsGap > 0 ? <span fg={colors.muted}>{" ".repeat(statsGap)}</span> : null}
@@ -568,25 +549,38 @@ export const DetailBody = ({
 	paneWidth = contentWidth + 2,
 	bodyLines = DETAIL_BODY_LINES,
 	bodyLineLimit = bodyLines,
-	conversationItems = [],
-	conversationStatus = "idle",
+	comments = [],
+	commentsStatus = "idle",
 	loadingIndicator,
 	themeId,
+	onLinkOpen,
 }: {
 	pullRequest: PullRequestItem
 	contentWidth: number
 	paneWidth?: number
 	bodyLines?: number
 	bodyLineLimit?: number
-	conversationItems?: readonly PullRequestConversationItem[]
-	conversationStatus?: DetailConversationStatus
+	comments?: readonly PullRequestComment[]
+	commentsStatus?: DetailCommentsStatus
 	loadingIndicator: string
 	themeId: ThemeId
+	onLinkOpen?: (url: string) => void
 }) => {
+	const renderer = useRenderer()
+	const [hoveredUrl, setHoveredUrl] = useState<string | null>(null)
+
 	const previewLines = useMemo(
-		() => detailBodyPreview({ pullRequest, contentWidth, limit: bodyLineLimit, conversationItems, conversationStatus }),
-		[pullRequest, contentWidth, bodyLineLimit, conversationItems, conversationStatus, themeId],
+		() => detailBodyPreview({ pullRequest, contentWidth, limit: bodyLineLimit, comments, commentsStatus }),
+		[pullRequest, contentWidth, bodyLineLimit, comments, commentsStatus, themeId],
 	)
+
+	const urlPositions = useMemo(() => collectUrlPositions(previewLines), [previewLines])
+
+	useEffect(() => {
+		if (hoveredUrl === null) return
+		renderer.setMousePointer("pointer")
+		return () => renderer.setMousePointer("default")
+	}, [hoveredUrl, renderer])
 
 	if (!pullRequest.detailLoaded) {
 		const topRows = Math.max(0, Math.floor((bodyLines - 1) / 2))
@@ -600,14 +594,36 @@ export const DetailBody = ({
 		)
 	}
 
+	const handleMouseMove = function (this: BoxRenderable, event: MouseEvent) {
+		if (urlPositions.length === 0) return
+		const localX = event.x - this.x - BODY_PADDING_LEFT
+		const localY = event.y - this.y
+		const next = findUrlAt(urlPositions, localY, localX)
+		if (next !== hoveredUrl) setHoveredUrl(next)
+	}
+
+	const handleMouseOut = () => {
+		if (hoveredUrl !== null) setHoveredUrl(null)
+	}
+
+	const handleMouseDown = function (this: BoxRenderable, event: MouseEvent) {
+		if (!onLinkOpen || event.button !== 0) return
+		const localX = event.x - this.x - BODY_PADDING_LEFT
+		const localY = event.y - this.y
+		const url = findUrlAt(urlPositions, localY, localX)
+		if (url === null) return
+		event.stopPropagation()
+		onLinkOpen(url)
+	}
+
 	return (
-		<box flexDirection="column" height={previewLines.length}>
+		<box flexDirection="column" height={previewLines.length} onMouseMove={handleMouseMove} onMouseOut={handleMouseOut} onMouseDown={handleMouseDown}>
 			{previewLines.map((line, index) =>
 				line.divider === true ? (
 					<Divider key={`${pullRequest.url}-${index}`} width={paneWidth} />
 				) : (
 					<PaddedRow key={`${pullRequest.url}-${index}`}>
-						<CommentSegmentsLine segments={line.segments} />
+						<CommentSegmentsLine segments={line.segments} hoveredUrl={hoveredUrl} />
 					</PaddedRow>
 				),
 			)}
@@ -674,11 +690,12 @@ export const DetailsPane = ({
 	bodyLineLimit = bodyLines,
 	paneWidth = contentWidth + 2,
 	showChecks = false,
-	conversationItems = [],
-	conversationStatus = "idle",
+	comments = [],
+	commentsStatus = "idle",
 	placeholderContent,
 	loadingIndicator,
 	themeId,
+	onLinkOpen,
 }: {
 	pullRequest: PullRequestItem | null
 	viewerUsername: string | null
@@ -687,13 +704,14 @@ export const DetailsPane = ({
 	bodyLineLimit?: number
 	paneWidth?: number
 	showChecks?: boolean
-	conversationItems?: readonly PullRequestConversationItem[]
-	conversationStatus?: DetailConversationStatus
+	comments?: readonly PullRequestComment[]
+	commentsStatus?: DetailCommentsStatus
 	placeholderContent: DetailPlaceholderContent
 	loadingIndicator: string
 	themeId: ThemeId
+	onLinkOpen?: (url: string) => void
 }) => {
-	const contentHeight = getDetailsPaneHeight({ pullRequest, contentWidth, bodyLines: bodyLineLimit, paneWidth, showChecks, conversationItems, conversationStatus })
+	const contentHeight = getDetailsPaneHeight({ pullRequest, contentWidth, bodyLines: bodyLineLimit, paneWidth, showChecks, comments, commentsStatus })
 
 	return (
 		<box flexDirection="column" height={contentHeight}>
@@ -706,10 +724,11 @@ export const DetailsPane = ({
 						paneWidth={paneWidth}
 						bodyLines={bodyLines}
 						bodyLineLimit={bodyLineLimit}
-						conversationItems={conversationItems}
-						conversationStatus={conversationStatus}
+						comments={comments}
+						commentsStatus={commentsStatus}
 						loadingIndicator={loadingIndicator}
 						themeId={themeId}
+						{...(onLinkOpen ? { onLinkOpen } : {})}
 					/>
 				</>
 			) : (
