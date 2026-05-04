@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import type { PullRequestItem } from "../domain.js"
+import type { CommitItem, PullRequestItem } from "../domain.js"
 import { CommandRunner, type CommandError } from "./CommandRunner.js"
 
 // `open` ships on macOS; `xdg-open` is the Linux/BSD convention; `start` is the
@@ -15,6 +15,7 @@ export class BrowserOpener extends Context.Service<
 	{
 		readonly openPullRequest: (pullRequest: PullRequestItem) => Effect.Effect<void, CommandError>
 		readonly openUrl: (url: string) => Effect.Effect<void, CommandError>
+		readonly openCommit: (commit: CommitItem) => Effect.Effect<void, CommandError>
 	}
 >()("ghui/BrowserOpener") {
 	static readonly layerNoDeps = Layer.effect(
@@ -31,7 +32,11 @@ export class BrowserOpener extends Context.Service<
 				yield* command.run(opener.command, [...opener.prefix, url])
 			})
 
-			return BrowserOpener.of({ openPullRequest, openUrl })
+			const openCommit = Effect.fn("BrowserOpener.openCommit")(function* (commit: CommitItem) {
+				yield* command.run(opener.command, [...opener.prefix, commit.url])
+			})
+
+			return BrowserOpener.of({ openPullRequest, openUrl, openCommit })
 		}),
 	)
 

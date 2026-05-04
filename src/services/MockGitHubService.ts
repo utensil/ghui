@@ -252,6 +252,8 @@ export const MockGitHubService = {
 				listRepoLabels: () => Effect.succeed([]),
 				addPullRequestLabel: () => Effect.void,
 				removePullRequestLabel: () => Effect.void,
+				listPullRequestCommits: () => Effect.succeed([]),
+				getCommitDiff: () => Effect.succeed(""),
 			}),
 		)
 	},

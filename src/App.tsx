@@ -14,6 +14,7 @@ import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
 import { config } from "./config.js"
 import {
+	type CommitItem,
 	type CreatePullRequestCommentInput,
 	type DiffCommentSide,
 	type ListPullRequestPageInput,
@@ -113,6 +114,7 @@ import {
 	CloseModal,
 	CommentModal,
 	CommentThreadModal,
+	CommitListModal,
 	filterChangedFiles,
 	filterLabels,
 	initialChangedFilesModalState,
@@ -120,6 +122,7 @@ import {
 	initialCommandPaletteState,
 	initialCommentModalState,
 	initialCommentThreadModalState,
+	initialCommitListModalState,
 	initialLabelModalState,
 	initialMergeModalState,
 	initialModal,
@@ -140,6 +143,7 @@ import {
 	type CommandPaletteState,
 	type CommentModalState,
 	type CommentThreadModalState,
+	type CommitListModalState,
 	type LabelModalState,
 	type MergeModalState,
 	type ModalState,
@@ -473,6 +477,13 @@ const submitPullRequestReviewAtom = githubRuntime.fn<SubmitPullRequestReviewInpu
 const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
 const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
 const openUrlAtom = githubRuntime.fn<string>()((url) => BrowserOpener.use((browser) => browser.openUrl(url)))
+const listPullRequestCommitsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listPullRequestCommits(input.repository, input.number)),
+)
+const getCommitDiffAtom = githubRuntime.fn<{ readonly repository: string; readonly sha: string }>()((input) =>
+	GitHubService.use((github) => github.getCommitDiff(input.repository, input.sha)),
+)
+const openCommitInBrowserAtom = githubRuntime.fn<CommitItem>()((commit) => BrowserOpener.use((browser) => browser.openCommit(commit)))
 
 const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferred: PullRequestMergeMethod | undefined): PullRequestMergeMethod => {
 	if (!allowed) return preferred ?? pullRequestMergeMethods[0]
@@ -690,6 +701,7 @@ export const App = () => {
 	const themeModalActive = Modal.$is("Theme")(activeModal)
 	const commandPaletteActive = Modal.$is("CommandPalette")(activeModal)
 	const openRepositoryModalActive = Modal.$is("OpenRepository")(activeModal)
+	const commitListModalActive = Modal.$is("CommitList")(activeModal)
 	const labelModal: LabelModalState = labelModalActive ? activeModal : initialLabelModalState
 	const closeModal: CloseModalState = closeModalActive ? activeModal : initialCloseModalState
 	const pullRequestStateModal: PullRequestStateModalState = pullRequestStateModalActive ? activeModal : initialPullRequestStateModalState
@@ -701,6 +713,7 @@ export const App = () => {
 	const themeModal: ThemeModalState = themeModalActive ? activeModal : initialThemeModalState
 	const commandPalette: CommandPaletteState = commandPaletteActive ? activeModal : initialCommandPaletteState
 	const openRepositoryModal: OpenRepositoryModalState = openRepositoryModalActive ? activeModal : initialOpenRepositoryModalState
+	const commitListModal: CommitListModalState = commitListModalActive ? activeModal : initialCommitListModalState
 	const makeModalSetter =
 		<Tag extends Exclude<ModalTag, "None">>(tag: Tag) =>
 		(next: ModalState<Tag> | ((prev: ModalState<Tag>) => ModalState<Tag>)) =>
@@ -724,6 +737,7 @@ export const App = () => {
 	const setThemeModal = makeModalSetter("Theme")
 	const setCommandPalette = makeModalSetter("CommandPalette")
 	const setOpenRepositoryModal = makeModalSetter("OpenRepository")
+	const setCommitListModal = makeModalSetter("CommitList")
 	setActiveTheme(themeId)
 	const themeIdRef = useRef(themeId)
 	const themeModalRef = useRef(themeModal)
@@ -761,6 +775,10 @@ export const App = () => {
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
 	const openUrl = useAtomSet(openUrlAtom, { mode: "promise" })
+	const loadPullRequestCommits = useAtomSet(listPullRequestCommitsAtom, { mode: "promise" })
+	const loadCommitDiff = useAtomSet(getCommitDiffAtom, { mode: "promise" })
+	const openCommitInBrowser = useAtomSet(openCommitInBrowserAtom, { mode: "promise" })
+	const commitDiffReturnToDetailRef = useRef(false)
 	const terminalWidth = width ?? 100
 	const terminalHeight = height ?? 24
 	const contentWidth = Math.max(1, terminalWidth)
@@ -1510,6 +1528,64 @@ export const App = () => {
 		setDetailFullView(false)
 		setDiffFullView(false)
 		setCommentsViewSelection(0)
+	}
+
+	const openCommitListModal = () => {
+		if (!selectedPullRequest) return
+		setCommitListModal({ selectedIndex: 0, commits: [], loading: true })
+		void loadPullRequestCommits({ repository: selectedPullRequest.repository, number: selectedPullRequest.number })
+			.then((commits) => {
+				setCommitListModal((current) => ({ ...current, commits, loading: false }))
+			})
+			.catch((error) => {
+				setCommitListModal((current) => ({ ...current, loading: false }))
+				flashNotice(errorMessage(error))
+			})
+	}
+
+	const openCommitDiff = () => {
+		if (!selectedPullRequest) return
+		const commits = commitListModal.commits
+		const commit = commits[commitListModal.selectedIndex]
+		if (!commit) return
+		closeActiveModal()
+		commitDiffReturnToDetailRef.current = detailFullView
+		const key = pullRequestDiffKey(selectedPullRequest)
+		setPullRequestDiffCache((current) => ({ ...current, [key]: PullRequestDiffState.Loading() }))
+		setDiffFullView(true)
+		setDetailFullView(false)
+		setCommentsViewActive(false)
+		setDiffFileIndex(0)
+		setDiffScrollTop(0)
+		setDiffCommentAnchorIndex(0)
+		setDiffPreferredSide(null)
+		setDiffCommentRangeStartIndex(null)
+		diffRenderableRefs.current.clear()
+		diffCommentLineColorsRef.current = { contextKey: null, entries: [] }
+		diffScrollRef.current?.scrollTo({ x: 0, y: 0 })
+		void loadCommitDiff({ repository: selectedPullRequest.repository, sha: commit.oid })
+			.then((patch) => {
+				setPullRequestDiffCache((current) => ({
+					...current,
+					[key]: PullRequestDiffState.Ready({ patch, files: splitPatchFiles(patch) }),
+				}))
+			})
+			.catch((error) => {
+				setPullRequestDiffCache((current) => ({
+					...current,
+					[key]: PullRequestDiffState.Error({ error: errorMessage(error) }),
+				}))
+				flashNotice(errorMessage(error))
+			})
+	}
+
+	const openSelectedCommitInBrowser = () => {
+		const commits = commitListModal.commits
+		const commit = commits[commitListModal.selectedIndex]
+		if (!commit) return
+		void openCommitInBrowser(commit)
+			.then(() => flashNotice(`Opened commit ${commit.oid.slice(0, 7)} in browser`))
+			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
 	const closeCommentsView = () => {
@@ -2567,6 +2643,10 @@ export const App = () => {
 			closeDiffView: () => {
 				setDiffFullView(false)
 				setDiffCommentRangeStartIndex(null)
+				if (commitDiffReturnToDetailRef.current) {
+					commitDiffReturnToDetailRef.current = false
+					setDetailFullView(true)
+				}
 			},
 			openCommentsView,
 			closeCommentsView,
@@ -2595,6 +2675,7 @@ export const App = () => {
 				if (selectedPullRequest) openSelectedPullRequestInBrowser(selectedPullRequest)
 			},
 			copyPullRequestMetadata: copySelectedPullRequestMetadata,
+			openCommitList: openCommitListModal,
 			quit: () => renderer.destroy(),
 		},
 	})
@@ -2759,6 +2840,7 @@ export const App = () => {
 		openRepositoryModalActive,
 		commentModalActive,
 		commandPaletteActive,
+		commitListModalActive,
 		filterMode,
 		diffFullView,
 		detailFullView,
@@ -2872,6 +2954,13 @@ export const App = () => {
 			},
 			moveSelection: moveCommandPaletteSelection,
 		},
+		commitListModal: {
+			stepUp: () => setCommitListModal((current) => ({ ...current, selectedIndex: Math.max(0, current.selectedIndex - 1) })),
+			stepDown: () => setCommitListModal((current) => ({ ...current, selectedIndex: Math.min(current.commits.length - 1, current.selectedIndex + 1) })),
+			openCommitDiff: openCommitDiff,
+			openInBrowser: openSelectedCommitInBrowser,
+			close: closeActiveModal,
+		},
 		filterModeCtx: {
 			cancel: () => {
 				setFilterDraft(filterQuery)
@@ -2904,6 +2993,7 @@ export const App = () => {
 			nextFile: () => runCommandById("diff.next-file"),
 			previousFile: () => runCommandById("diff.previous-file"),
 			openInBrowser: () => runCommandById("pull.open-browser"),
+			openCommits: () => openCommitListModal(),
 		},
 		detail: {
 			halfPage,
@@ -2920,6 +3010,7 @@ export const App = () => {
 			refresh: () => runCommandById("pull.refresh"),
 			openInBrowser: () => runCommandById("pull.open-browser"),
 			copyMetadata: () => runCommandById("pull.copy-metadata"),
+			openCommits: () => openCommitListModal(),
 		},
 		commentsView: {
 			halfPage,
@@ -3169,6 +3260,11 @@ export const App = () => {
 	const commandPaletteHeight = commandPaletteLayout.height
 	const commandPaletteLeft = commandPaletteLayout.left
 	const commandPaletteTop = commandPaletteLayout.top
+	const commitListLayout = sizedModal(50, 88, 8, 22)
+	const commitListModalWidth = commitListLayout.width
+	const commitListModalHeight = commitListLayout.height
+	const commitListModalLeft = commitListLayout.left
+	const commitListModalTop = commitListLayout.top
 
 	return (
 		<box width={terminalWidth} height={terminalHeight} flexDirection="column" backgroundColor={colors.background}>
@@ -3488,6 +3584,15 @@ export const App = () => {
 					offsetTop={commandPaletteTop}
 					onSelectCommandIndex={selectCommandPaletteIndex}
 					onRunCommand={runCommandPaletteCommand}
+				/>
+			) : null}
+			{commitListModalActive ? (
+				<CommitListModal
+					state={commitListModal}
+					modalWidth={commitListModalWidth}
+					modalHeight={commitListModalHeight}
+					offsetLeft={commitListModalLeft}
+					offsetTop={commitListModalTop}
 				/>
 			) : null}
 		</box>

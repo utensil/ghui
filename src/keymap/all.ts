@@ -5,6 +5,7 @@ import { commandPaletteKeymap, type CommandPaletteCtx } from "./commandPalette.t
 import { commentModalKeymap, type CommentModalCtx } from "./commentModal.ts"
 import { commentsViewKeymap, type CommentsViewCtx } from "./commentsView.ts"
 import { commentThreadModalKeymap, type CommentThreadModalCtx } from "./commentThreadModal.ts"
+import { commitListModalKeymap, type CommitListModalCtx } from "./commitListModal.ts"
 import { detailViewKeymap, type DetailViewCtx } from "./detailView.ts"
 import { diffViewKeymap, type DiffViewCtx } from "./diffView.ts"
 import { filterModeKeymap, type FilterModeCtx } from "./filterMode.ts"
@@ -29,6 +30,7 @@ export interface AppCtx {
 	readonly openRepositoryModalActive: boolean
 	readonly commentModalActive: boolean
 	readonly commandPaletteActive: boolean
+	readonly commitListModalActive: boolean
 	readonly filterMode: boolean
 	readonly diffFullView: boolean
 	readonly detailFullView: boolean
@@ -50,6 +52,7 @@ export interface AppCtx {
 	readonly openRepositoryModal: OpenRepositoryModalCtx
 	readonly commentModal: CommentModalCtx
 	readonly commandPalette: CommandPaletteCtx
+	readonly commitListModal: CommitListModalCtx
 	readonly filterModeCtx: FilterModeCtx
 	readonly diff: DiffViewCtx
 	readonly detail: DetailViewCtx
@@ -74,7 +77,8 @@ const modalActive = (a: AppCtx): boolean =>
 	a.themeModalActive ||
 	a.openRepositoryModalActive ||
 	a.commentModalActive ||
-	a.commandPaletteActive
+	a.commandPaletteActive ||
+	a.commitListModalActive
 
 const inListMode = (a: AppCtx): boolean => !modalActive(a) && !a.filterMode && !a.diffFullView && !a.detailFullView && !a.commentsViewActive
 
@@ -109,6 +113,7 @@ export const appKeymap = App(
 	openRepositoryModalKeymap.scope((a) => a.openRepositoryModalActive && a.openRepositoryModal),
 	commentModalKeymap.scope((a) => a.commentModalActive && a.commentModal),
 	commandPaletteKeymap.scope((a) => a.commandPaletteActive && a.commandPalette),
+	commitListModalKeymap.scope((a) => a.commitListModalActive && a.commitListModal),
 	filterModeKeymap.scope((a) => a.filterMode && a.filterModeCtx),
 
 	// Full-view layers (only when no modal is on top)

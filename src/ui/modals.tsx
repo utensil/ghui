@@ -1,6 +1,7 @@
 import { TextAttributes } from "@opentui/core"
 import { Data } from "effect"
 import type {
+	CommitItem,
 	PullRequestLabel,
 	PullRequestMergeInfo,
 	PullRequestMergeKind,
@@ -120,6 +121,18 @@ export interface CommandPaletteState {
 export interface OpenRepositoryModalState {
 	readonly query: string
 	readonly error: string | null
+}
+
+export interface CommitListModalState {
+	readonly selectedIndex: number
+	readonly commits: readonly CommitItem[]
+	readonly loading: boolean
+}
+
+export const initialCommitListModalState: CommitListModalState = {
+	selectedIndex: 0,
+	commits: [],
+	loading: false,
 }
 
 export const filterLabels = (labels: readonly PullRequestLabel[], query: string) => {
@@ -406,6 +419,7 @@ export type Modal = Data.TaggedEnum<{
 	Theme: ThemeModalState
 	CommandPalette: CommandPaletteState
 	OpenRepository: OpenRepositoryModalState
+	CommitList: CommitListModalState
 }>
 
 export const Modal = Data.taggedEnum<Modal>()
@@ -426,6 +440,7 @@ export const modalInitialStates = {
 	Theme: initialThemeModalState,
 	CommandPalette: initialCommandPaletteState,
 	OpenRepository: initialOpenRepositoryModalState,
+	CommitList: initialCommitListModalState,
 } as const satisfies { [Tag in Exclude<ModalTag, "None">]: ModalState<Tag> }
 
 export const OpenRepositoryModal = ({
@@ -1183,6 +1198,96 @@ export const CommentThreadModal = ({
 				<PlainLine text={fitCell("No comments on this line.", contentWidth)} fg={colors.muted} />
 			) : (
 				visibleRows.map((row) => <CommentSegmentsLine key={row.key} segments={row.segments} />)
+			)}
+		</StandardModal>
+	)
+}
+
+const commitTimeAgo = (date: Date): string => {
+	const seconds = Math.floor((Date.now() - date.getTime()) / 1000)
+	if (seconds < 60) return "just now"
+	const minutes = Math.floor(seconds / 60)
+	if (minutes < 60) return `${minutes}m ago`
+	const hours = Math.floor(minutes / 60)
+	if (hours < 24) return `${hours}h ago`
+	const days = Math.floor(hours / 24)
+	if (days < 30) return `${days}d ago`
+	const months = Math.floor(days / 30)
+	if (months < 12) return `${months}mo ago`
+	return `${Math.floor(months / 12)}y ago`
+}
+
+export const CommitListModal = ({
+	state,
+	modalWidth,
+	modalHeight,
+	offsetLeft,
+	offsetTop,
+}: {
+	state: CommitListModalState
+	modalWidth: number
+	modalHeight: number
+	offsetLeft: number
+	offsetTop: number
+}) => {
+	const { contentWidth, bodyHeight: maxVisible } = standardModalDims(modalWidth, modalHeight)
+	const selectedIndex = state.commits.length === 0 ? 0 : Math.max(0, Math.min(state.selectedIndex, state.commits.length - 1))
+	const scrollStart = Math.min(Math.max(0, state.commits.length - maxVisible), Math.max(0, selectedIndex - maxVisible + 1))
+	const visibleCommits = state.commits.slice(scrollStart, scrollStart + maxVisible)
+	const messageTopRows = Math.max(0, Math.floor((maxVisible - 1) / 2))
+	const messageBottomRows = Math.max(0, maxVisible - messageTopRows - 1)
+
+	return (
+		<StandardModal
+			left={offsetLeft}
+			top={offsetTop}
+			width={modalWidth}
+			height={modalHeight}
+			title="Commits"
+			subtitle={null}
+			headerRight={{ text: state.loading ? "loading" : `${state.commits.length}` }}
+			footer={
+				<HintRow
+					items={[
+						{ key: "↑↓", label: "move" },
+						{ key: "d", label: "diff" },
+						{ key: "o", label: "open" },
+						{ key: "esc", label: "close" },
+					]}
+				/>
+			}
+		>
+			{state.loading ? (
+				<>
+					<Filler rows={messageTopRows} prefix="top" />
+					<PlainLine text={centerCell("Loading commits...", contentWidth)} fg={colors.muted} />
+					<Filler rows={messageBottomRows} prefix="bottom" />
+				</>
+			) : visibleCommits.length === 0 ? (
+				<>
+					<Filler rows={messageTopRows} prefix="top" />
+					<PlainLine text={centerCell("No commits found", contentWidth)} fg={colors.muted} />
+					<Filler rows={messageBottomRows} prefix="bottom" />
+				</>
+			) : (
+				visibleCommits.map((commit, index) => {
+					const actualIndex = scrollStart + index
+					const isSelected = actualIndex === selectedIndex
+					const shortOid = commit.oid.slice(0, 7)
+					const timeAgo = commitTimeAgo(commit.committedDate)
+					const metaWidth = shortOid.length + 1 + commit.author.length + 1 + timeAgo.length
+					const headlineWidth = Math.max(1, contentWidth - metaWidth - 1)
+					return (
+						<TextLine key={commit.oid} bg={isSelected ? colors.selectedBg : undefined} fg={isSelected ? colors.selectedText : colors.text}>
+							<span fg={colors.accent}>{shortOid}</span>
+							<span> </span>
+							<span>{fitCell(commit.messageHeadline, headlineWidth)}</span>
+							<span> </span>
+							<span fg={colors.muted}>{commit.author}</span>
+							<span fg={colors.muted}> {timeAgo}</span>
+						</TextLine>
+					)
+				})
 			)}
 		</StandardModal>
 	)

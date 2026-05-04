@@ -21,6 +21,7 @@ interface HintsContext {
 	readonly isLoading: boolean
 	readonly loadingIndicator: string
 	readonly retryProgress: RetryProgress
+	readonly surface?: string
 }
 
 const filterEditingHints: readonly HintItem[] = [
@@ -32,6 +33,8 @@ const filterEditingHints: readonly HintItem[] = [
 	{ key: "ctrl-w", label: "word" },
 ]
 
+const isPullRequestSurface = (surface?: string) => !surface || surface === "pull-request"
+
 const diffViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "esc", label: "back" },
 	{ key: "↑↓", label: ctx.diffRangeActive ? "range" : "line" },
@@ -39,6 +42,7 @@ const diffViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "v", label: ctx.diffRangeActive ? "clear" : "range" },
 	{ key: "[]", label: "files" },
 	{ key: "r", label: "reload" },
+	{ key: "C", label: "commits" },
 ]
 
 const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
@@ -46,6 +50,7 @@ const detailFullViewHints = (ctx: HintsContext): readonly HintItem[] => [
 	{ key: "↑↓", label: "scroll" },
 	{ key: "r", label: ctx.hasError ? "retry" : "refresh" },
 	{ key: "d", label: "diff", when: ctx.hasSelection },
+	{ key: "C", label: "commits", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 ]
 
 const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
@@ -63,6 +68,7 @@ const defaultHints = (ctx: HintsContext): readonly HintItem[] => {
 		{ key: "r", label: "retry", when: ctx.hasError },
 		{ key: "enter", label: "details", when: ctx.hasSelection },
 		{ key: "d", label: "diff", when: ctx.hasSelection },
+		{ key: "C", label: "commits", when: isPullRequestSurface(ctx.surface) && ctx.hasSelection },
 		{ key: "ctrl-p", label: "commands" },
 	]
 }

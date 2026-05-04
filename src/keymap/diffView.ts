@@ -23,6 +23,7 @@ export interface DiffViewCtx {
 	readonly nextFile: () => void
 	readonly previousFile: () => void
 	readonly openInBrowser: () => void
+	readonly openCommits: () => void
 }
 
 const Diff = context<DiffViewCtx>()
@@ -90,4 +91,5 @@ export const diffViewKeymap = Diff(
 	{ id: "diff.align-bottom", title: "Align bottom", keys: ["z b"], run: (s) => s.alignAnchor("bottom") },
 
 	{ id: "diff.open-browser", title: "Open in browser", keys: ["o"], run: (s) => s.openInBrowser() },
+	{ id: "diff.commits", title: "View commits", keys: ["shift+c"], run: (s) => s.openCommits() },
 )

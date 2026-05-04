@@ -38,6 +38,7 @@ interface AppCommandActions {
 	readonly openCloseModal: () => void
 	readonly openPullRequestInBrowser: () => void
 	readonly copyPullRequestMetadata: () => void
+	readonly openCommitList: () => void
 	readonly quit: () => void
 }
 
@@ -419,6 +420,14 @@ export const buildAppCommands = ({
 			shortcut: "y",
 			keywords: ["clipboard", "url", "title"],
 			run: actions.copyPullRequestMetadata,
+		}),
+		forSelected({
+			id: "pull.commits",
+			title: "View pull request commits",
+			scope: "Pull request",
+			shortcut: "C",
+			keywords: ["commit", "log", "history"],
+			run: actions.openCommitList,
 		}),
 		defineCommand({
 			id: "app.quit",
