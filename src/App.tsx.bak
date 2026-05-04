@@ -13,12 +13,48 @@ import { buildAppCommands } from "./appCommands.js"
 import type { AppCommand } from "./commands.js"
 import { clampCommandIndex, type CommandScope, commandEnabled, defineCommand, filterCommands, sortCommandsByActiveScope } from "./commands.js"
 import { config } from "./config.js"
-import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestComment, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestMergeMethod, type PullRequestReviewComment, type RepositoryMergeMethods, type SubmitPullRequestReviewInput } from "./domain.js"
+<<<<<<< HEAD
+import { auxiliarySurfaces, isAuxiliarySurface, surfaceLabels, surfaceShortLabels, type AppSurface, type AuxiliaryItem, type AuxiliarySurface, type CreatePullRequestCommentInput, type DiffCommentSide, type IssueComment, type IssueItem, type ListIssuePageInput, type ListPullRequestPageInput, type LoadStatus, type PullRequestConversationItem, type PullRequestItem, type PullRequestLabel, type PullRequestMergeAction, type PullRequestReviewComment, type SubmitPullRequestReviewInput } from "./domain.js"
+||||||| dea1d03
+import {
+	type CreatePullRequestCommentInput,
+	type DiffCommentSide,
+	type ListPullRequestPageInput,
+	type LoadStatus,
+	type PullRequestConversationItem,
+	type PullRequestItem,
+	type PullRequestLabel,
+	type PullRequestMergeAction,
+	type PullRequestReviewComment,
+	type SubmitPullRequestReviewInput,
+} from "./domain.js"
+=======
+import {
+	type CreatePullRequestCommentInput,
+	type DiffCommentSide,
+	type ListPullRequestPageInput,
+	type LoadStatus,
+	type PullRequestComment,
+	type PullRequestItem,
+	type PullRequestLabel,
+	type PullRequestMergeAction,
+	type PullRequestMergeMethod,
+	type PullRequestReviewComment,
+	type RepositoryMergeMethods,
+	type SubmitPullRequestReviewInput,
+} from "./domain.js"
 import { allowedMergeMethodList, pullRequestMergeMethods } from "./domain.js"
+>>>>>>> kitlangton/main
 import { formatShortDate, formatTimestamp } from "./date.js"
 import { errorMessage } from "./errors.js"
+<<<<<<< HEAD
 import { activeIssueViews, initialIssueView, issueViewCacheKey, issueViewEquals, issueViewLabel, issueViewMode, issueViewRepository, nextIssueView, type IssueView } from "./issueViews.js"
+import { availableMergeActions, mergeInfoFromPullRequest } from "./mergeActions.js"
+||||||| dea1d03
+import { availableMergeActions, mergeInfoFromPullRequest } from "./mergeActions.js"
+=======
 import { getMergeKindDefinition, mergeInfoFromPullRequest, requiresMarkReady, visibleMergeKinds } from "./mergeActions.js"
+>>>>>>> kitlangton/main
 import { Observability } from "./observability.js"
 import { mergeCachedDetails } from "./pullRequestCache.js"
 import { activePullRequestViews, initialPullRequestView, nextView, parseRepositoryInput, type PullRequestView, viewCacheKey, viewEquals, viewLabel, viewMode, viewRepository } from "./pullRequestViews.js"
@@ -27,9 +63,15 @@ import { Clipboard } from "./services/Clipboard.js"
 import { CommandRunner } from "./services/CommandRunner.js"
 import { GitHubService } from "./services/GitHubService.js"
 import { loadStoredDiffWhitespaceMode, loadStoredThemeId, saveStoredDiffWhitespaceMode, saveStoredThemeId } from "./themeStore.js"
-import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+<<<<<<< HEAD
+import { colors, filterThemeDefinitions, mixHex, setActiveTheme, themeDefinitions, type ThemeId } from "./ui/colors.js"
 import { AUXILIARY_BODY_SCROLL_LIMIT, AuxiliaryDetailBody, AuxiliaryDetailHeader, AuxiliaryDetailsPane, getAuxiliaryDetailHeaderHeight, getAuxiliaryDetailJunctionRows, getAuxiliaryDetailsPaneHeight, getScrollableAuxiliaryBodyHeight } from "./ui/AuxiliaryDetailsPane.js"
 import { auxiliaryListRowIndex, AuxiliaryList, buildAuxiliaryListRows } from "./ui/AuxiliaryList.js"
+import { backspace as editorBackspace, deleteForward as editorDeleteForward, deleteToLineEnd, deleteToLineStart, deleteWordBackward, deleteWordForward, insertText, moveLeft as editorMoveLeft, moveLineEnd, moveLineStart, moveRight as editorMoveRight, moveVertically, moveWordBackward, moveWordForward, type CommentEditorValue } from "./ui/commentEditor.js"
+import { buildStackedDiffFiles, diffAnchorOnSide, diffCommentAnchorLabel, diffCommentLocationKey, getStackedDiffCommentAnchors, minimizeWhitespaceDiffFiles, nearestDiffCommentAnchorIndex, PullRequestDiffState, pullRequestDiffKey, safeDiffFileIndex, scrollTopForVisibleLine, splitPatchFiles, stackedDiffFileAtLine, verticalDiffAnchor, type DiffCommentAnchor, type DiffView, type DiffWhitespaceMode, type DiffWrapMode, type StackedDiffCommentAnchor } from "./ui/diff.js"
+import { DETAIL_BODY_SCROLL_LIMIT, DetailBody, DetailHeader, DetailPlaceholder, DetailsPane, getDetailHeaderHeight, getDetailJunctionRows, getDetailsPaneHeight, getScrollableDetailBodyHeight, LoadingPane, type DetailConversationStatus, type DetailPlaceholderContent } from "./ui/DetailsPane.js"
+||||||| dea1d03
+import { colors, filterThemeDefinitions, mixHex, setActiveTheme, themeDefinitions, type ThemeId } from "./ui/colors.js"
 import {
 	backspace as editorBackspace,
 	deleteForward as editorDeleteForward,
@@ -51,17 +93,74 @@ import {
 	buildStackedDiffFiles,
 	diffAnchorOnSide,
 	diffCommentAnchorLabel,
+	diffCommentLineLabel,
 	diffCommentLocationKey,
+	diffCommentSideLabel,
 	getStackedDiffCommentAnchors,
 	minimizeWhitespaceDiffFiles,
-	nearestDiffCommentAnchorIndex,
 	PullRequestDiffState,
 	pullRequestDiffKey,
 	safeDiffFileIndex,
 	scrollTopForVisibleLine,
 	splitPatchFiles,
-	stackedDiffFileAtLine,
+	stackedDiffFileIndexAtLine,
 	type DiffCommentAnchor,
+	type DiffCommentKind,
+	type DiffView,
+	type DiffWhitespaceMode,
+	type DiffWrapMode,
+	type StackedDiffCommentAnchor,
+	verticalDiffAnchor,
+} from "./ui/diff.js"
+import {
+	DETAIL_BODY_SCROLL_LIMIT,
+	DetailBody,
+	DetailHeader,
+	DetailPlaceholder,
+	DetailsPane,
+	getDetailHeaderHeight,
+	getDetailJunctionRows,
+	getScrollableDetailBodyHeight,
+	LoadingPane,
+	type DetailConversationStatus,
+	type DetailPlaceholderContent,
+} from "./ui/DetailsPane.js"
+=======
+import { colors, filterThemeDefinitions, mixHex, pairedThemeId, setActiveTheme, themeDefinitions, themeToneForThemeId, type ThemeId, type ThemeTone } from "./ui/colors.js"
+import {
+	backspace as editorBackspace,
+	deleteForward as editorDeleteForward,
+	deleteToLineEnd,
+	deleteToLineStart,
+	deleteWordBackward,
+	deleteWordForward,
+	insertText,
+	moveLeft as editorMoveLeft,
+	moveLineEnd,
+	moveLineStart,
+	moveRight as editorMoveRight,
+	moveVertically,
+	moveWordBackward,
+	moveWordForward,
+	type CommentEditorValue,
+} from "./ui/commentEditor.js"
+import {
+	buildStackedDiffFiles,
+	diffAnchorOnSide,
+	diffCommentAnchorLabel,
+	diffCommentLineLabel,
+	diffCommentLocationKey,
+	diffCommentSideLabel,
+	getStackedDiffCommentAnchors,
+	minimizeWhitespaceDiffFiles,
+	PullRequestDiffState,
+	pullRequestDiffKey,
+	safeDiffFileIndex,
+	scrollTopForVisibleLine,
+	splitPatchFiles,
+	stackedDiffFileIndexAtLine,
+	type DiffCommentAnchor,
+	type DiffCommentKind,
 	type DiffView,
 	type DiffWhitespaceMode,
 	type DiffWrapMode,
@@ -78,31 +177,79 @@ import {
 	getDetailHeaderHeight,
 	getDetailJunctionRows,
 	getScrollableDetailBodyHeight,
-	LoadingPane,
 	type DetailCommentsStatus,
 	type DetailPlaceholderContent,
 } from "./ui/DetailsPane.js"
+>>>>>>> kitlangton/main
 import { FooterHints, initialRetryProgress, RetryProgress } from "./ui/FooterHints.js"
+<<<<<<< HEAD
 import { ISSUE_BODY_SCROLL_LIMIT, IssueDetailBody, IssueDetailHeader, IssueDetailsPane, getIssueDetailHeaderHeight, getIssueDetailJunctionRows, getIssueDetailsPaneHeight, getScrollableIssueBodyHeight } from "./ui/IssueDetailsPane.js"
 import { buildIssueListRows, issueListRowIndex, IssueList } from "./ui/IssueList.js"
 import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
+||||||| dea1d03
+import { LoadingLogoPane } from "./ui/LoadingLogo.js"
+import { Divider, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
+=======
+import { LoadingLogoPane } from "./ui/LoadingLogo.js"
+import { Divider, Filler, fitCell, PlainLine, SeparatorColumn } from "./ui/primitives.js"
+>>>>>>> kitlangton/main
 import { CommandPalette } from "./ui/CommandPalette.js"
+<<<<<<< HEAD
+import { ChangedFilesModal, CloseModal, CommitListModal, CommentModal, CommentThreadModal, ConfirmActionModal, filterChangedFiles, filterLabels, initialChangedFilesModalState, initialCloseModalState, initialCommandPaletteState, initialCommitListModalState, initialCommentModalState, initialCommentThreadModalState, initialConfirmActionModalState, initialLabelModalState, initialMergeModalState, initialModal, initialOpenRepositoryModalState, initialSubmitReviewModalState, initialThemeModalState, LabelModal, MergeModal, Modal, OpenRepositoryModal, submitReviewOptions, SubmitReviewModal, ThemeModal, type ChangedFilesModalState, type CloseModalState, type CommandPaletteState, type CommitListModalState, type CommentModalState, type CommentThreadModalState, type ConfirmActionModalState, type LabelModalState, type MergeModalState, type ModalState, type ModalTag, type OpenRepositoryModalState, type SubmitReviewModalState, type ThemeModalState } from "./ui/modals.js"
+import { groupBy, repositoryOwner, reviewLabel } from "./ui/pullRequests.js"
+||||||| dea1d03
 import {
 	ChangedFilesModal,
 	CloseModal,
-	CommitListModal,
 	CommentModal,
 	CommentThreadModal,
-	ConfirmActionModal,
 	filterChangedFiles,
 	filterLabels,
 	initialChangedFilesModalState,
 	initialCloseModalState,
 	initialCommandPaletteState,
-	initialCommitListModalState,
 	initialCommentModalState,
 	initialCommentThreadModalState,
-	initialConfirmActionModalState,
+	initialLabelModalState,
+	initialMergeModalState,
+	initialModal,
+	initialOpenRepositoryModalState,
+	initialSubmitReviewModalState,
+	initialThemeModalState,
+	LabelModal,
+	MergeModal,
+	Modal,
+	OpenRepositoryModal,
+	submitReviewOptions,
+	SubmitReviewModal,
+	ThemeModal,
+	type ChangedFilesModalState,
+	type CloseModalState,
+	type CommandPaletteState,
+	type CommentModalState,
+	type CommentThreadModalState,
+	type LabelModalState,
+	type MergeModalState,
+	type ModalState,
+	type ModalTag,
+	type OpenRepositoryModalState,
+	type SubmitReviewModalState,
+	type ThemeModalState,
+} from "./ui/modals.js"
+import { groupBy, reviewLabel } from "./ui/pullRequests.js"
+=======
+import {
+	ChangedFilesModal,
+	CloseModal,
+	CommentModal,
+	CommentThreadModal,
+	filterChangedFiles,
+	filterLabels,
+	initialChangedFilesModalState,
+	initialCloseModalState,
+	initialCommandPaletteState,
+	initialCommentModalState,
+	initialCommentThreadModalState,
 	initialLabelModalState,
 	initialMergeModalState,
 	initialModal,
@@ -121,10 +268,8 @@ import {
 	type ChangedFilesModalState,
 	type CloseModalState,
 	type CommandPaletteState,
-	type CommitListModalState,
 	type CommentModalState,
 	type CommentThreadModalState,
-	type ConfirmActionModalState,
 	type LabelModalState,
 	type MergeModalState,
 	type ModalState,
@@ -134,13 +279,19 @@ import {
 	type SubmitReviewModalState,
 	type ThemeModalState,
 } from "./ui/modals.js"
-import { groupBy, pullRequestMetadataText, repositoryOwner } from "./ui/pullRequests.js"
+import { groupBy, pullRequestMetadataText } from "./ui/pullRequests.js"
 import { quotedReplyBody } from "./ui/comments.js"
 import { CommentsPane, commentsViewRowCount, orderCommentsForDisplay } from "./ui/CommentsPane.js"
+>>>>>>> kitlangton/main
 import { PullRequestDiffPane } from "./ui/PullRequestDiffPane.js"
 import { buildPullRequestListRows, pullRequestListRowIndex, PullRequestList } from "./ui/PullRequestList.js"
 import { editSingleLineInput, isSingleLineInputKey, printableKeyText, singleLineText } from "./ui/singleLineInput.js"
+<<<<<<< HEAD
+||||||| dea1d03
+import { SPINNER_FRAMES } from "./ui/spinner.js"
+=======
 import { SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./ui/spinner.js"
+>>>>>>> kitlangton/main
 
 const parseOptionalPositiveInt = (value: string | undefined, fallback: number | null) => {
 	if (value === undefined) return fallback
@@ -243,7 +394,7 @@ const STAGGERED_REFRESH_INITIAL_DELAY_MS = 5_000
 const STAGGERED_REFRESH_GAP_MS = 20_000
 const USER_INPUT_REFRESH_IDLE_MS = 1_500
 const DIFF_STICKY_HEADER_LINES = 2
-
+const LOADING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"] as const
 const MAX_REPOSITORY_CACHE_ENTRIES = 8
 const LOAD_MORE_SELECTION_THRESHOLD = 8
 const LOAD_MORE_SCROLL_THRESHOLD = 3
@@ -307,13 +458,13 @@ const trimQueueLoadCache = (cache: Partial<Record<string, PullRequestLoad>>) => 
 	return Object.fromEntries(Object.entries(cache).filter(([key]) => !remove.has(key))) as Partial<Record<string, PullRequestLoad>>
 }
 
+<<<<<<< HEAD
 const trimIssueLoadCache = (cache: Partial<Record<string, IssueLoad>>) => {
 	const repositoryKeys = Object.keys(cache).filter((key) => key.startsWith("repository:"))
 	if (repositoryKeys.length <= MAX_REPOSITORY_CACHE_ENTRIES) return cache
 	const remove = new Set(repositoryKeys.slice(0, repositoryKeys.length - MAX_REPOSITORY_CACHE_ENTRIES))
 	return Object.fromEntries(Object.entries(cache).filter(([key]) => !remove.has(key))) as Partial<Record<string, IssueLoad>>
 }
-const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
 const pullRequestsAtom = githubRuntime.atom(
 	GitHubService.use((github) =>
 		Effect.gen(function*() {
@@ -449,6 +600,50 @@ const auxiliaryAtom = githubRuntime.atom(
 		})
 	),
 ).pipe(Atom.keepAlive)
+||||||| dea1d03
+				yield* Atom.set(retryProgressAtom, initialRetryProgress)
+				const cache = yield* Atom.get(queueLoadCacheAtom)
+				const existingLoad = cache[cacheKey]
+				const data = mergeCachedDetails(page.items, existingLoad?.data)
+				const load = {
+					view,
+					data,
+					fetchedAt: new Date(),
+					endCursor: page.endCursor,
+					hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+				} satisfies PullRequestLoad
+				const nextCache = { ...cache }
+				delete nextCache[cacheKey]
+				nextCache[cacheKey] = load
+				yield* Atom.set(queueLoadCacheAtom, trimQueueLoadCache(nextCache))
+				return load
+			}),
+		),
+	)
+	.pipe(Atom.keepAlive)
+=======
+				yield* Atom.set(retryProgressAtom, initialRetryProgress)
+				const cache = yield* Atom.get(queueLoadCacheAtom)
+				const existingLoad = cache[cacheKey]
+				const data = mergeCachedDetails(page.items, existingLoad?.data)
+				const load = {
+					view,
+					data,
+					fetchedAt: new Date(),
+					endCursor: page.endCursor,
+					hasNextPage: page.hasNextPage && data.length < config.prFetchLimit,
+				} satisfies PullRequestLoad
+				const nextCache = { ...cache }
+				delete nextCache[cacheKey]
+				nextCache[cacheKey] = load
+				yield* Atom.set(queueLoadCacheAtom, trimQueueLoadCache(nextCache))
+				return load
+			}),
+		),
+	)
+	.pipe(Atom.keepAlive)
+const wrapIndex = (index: number, length: number) => (length === 0 ? 0 : ((index % length) + length) % length)
+>>>>>>> kitlangton/main
 const selectedIndexAtom = Atom.make(0)
 const noticeAtom = Atom.make<string | null>(null)
 const filterQueryAtom = Atom.make("")
@@ -469,9 +664,17 @@ const diffCommentAnchorIndexAtom = Atom.make(0)
 const diffPreferredSideAtom = Atom.make<DiffCommentSide | null>(null)
 const diffCommentThreadsAtom = Atom.make<Record<string, readonly PullRequestReviewComment[]>>({}).pipe(Atom.keepAlive)
 const diffCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
+<<<<<<< HEAD
+const pullRequestConversationAtom = Atom.make<Record<string, readonly PullRequestConversationItem[]>>({}).pipe(Atom.keepAlive)
+const pullRequestConversationLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
+const issueCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready" | "error">>({}).pipe(Atom.keepAlive)
+||||||| dea1d03
+const pullRequestConversationAtom = Atom.make<Record<string, readonly PullRequestConversationItem[]>>({}).pipe(Atom.keepAlive)
+const pullRequestConversationLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
+=======
 const pullRequestCommentsAtom = Atom.make<Record<string, readonly PullRequestComment[]>>({}).pipe(Atom.keepAlive)
 const pullRequestCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready">>({}).pipe(Atom.keepAlive)
-const issueCommentsLoadedAtom = Atom.make<Record<string, "loading" | "ready" | "error">>({}).pipe(Atom.keepAlive)
+>>>>>>> kitlangton/main
 const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>({}).pipe(Atom.keepAlive)
 
 const activeModalAtom = Atom.make<Modal>(initialModal)
@@ -784,17 +987,24 @@ const pullRequestDiffAtom = Atom.family((key: string) => {
 	const { repository, number } = parsePullRequestDiffAtomKey(key)
 	return githubRuntime.atom(GitHubService.use((github) => github.getPullRequestDiff(repository, number)))
 })
+<<<<<<< HEAD
 const listPullRequestCommitsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestCommits(input.repository, input.number))
 )
 const getCommitDiffAtom = githubRuntime.fn<{ readonly repository: string; readonly sha: string }>()((input) =>
 	GitHubService.use((github) => github.getCommitDiff(input.repository, input.sha))
-)
+||||||| dea1d03
+=======
 const listPullRequestReviewCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestReviewComments(input.repository, input.number)),
+>>>>>>> kitlangton/main
 )
 const listPullRequestCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listPullRequestComments(input.repository, input.number))
+)
+<<<<<<< HEAD
+const listPullRequestConversationAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listPullRequestConversation(input.repository, input.number))
 )
 const listIssueCommentsAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.listIssueComments(input.repository, input.number))
@@ -829,6 +1039,12 @@ const loadAuxiliarySurfaceAtom = githubRuntime.fn<{ readonly surface: AuxiliaryS
 		})
 	)
 )
+||||||| dea1d03
+const listPullRequestConversationAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
+	GitHubService.use((github) => github.listPullRequestConversation(input.repository, input.number)),
+)
+=======
+>>>>>>> kitlangton/main
 const getPullRequestMergeInfoAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number }>()((input) =>
 	GitHubService.use((github) => github.getPullRequestMergeInfo(input.repository, input.number))
 )
@@ -853,8 +1069,12 @@ const replyToReviewCommentAtom = githubRuntime.fn<{ readonly repository: string;
 	GitHubService.use((github) => github.replyToReviewComment(input.repository, input.number, input.inReplyTo, input.body)),
 )
 const submitPullRequestReviewAtom = githubRuntime.fn<SubmitPullRequestReviewInput>()((input) => GitHubService.use((github) => github.submitPullRequestReview(input)))
+const createIssueCommentAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly body: string }>()((input) =>
+	GitHubService.use((github) => github.createIssueComment(input.repository, input.number, input.body))
+)
 const copyToClipboardAtom = githubRuntime.fn<string>()((text) => Clipboard.use((clipboard) => clipboard.copy(text)))
 const openInBrowserAtom = githubRuntime.fn<PullRequestItem>()((pullRequest) => BrowserOpener.use((browser) => browser.openPullRequest(pullRequest)))
+<<<<<<< HEAD
 const openIssueInBrowserAtom = githubRuntime.fn<IssueItem>()((issue) => BrowserOpener.use((browser) => browser.openIssue(issue)))
 const openAuxiliaryInBrowserAtom = githubRuntime.fn<AuxiliaryItem>()((item) => BrowserOpener.use((browser) => browser.openAuxiliaryItem(item)))
 const markNotificationReadAtom = githubRuntime.fn<string>()((notificationId) => GitHubService.use((github) => github.markNotificationRead(notificationId)))
@@ -866,6 +1086,8 @@ const addIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readon
 const removeIssueLabelAtom = githubRuntime.fn<{ readonly repository: string; readonly number: number; readonly label: string }>()((input) =>
 	GitHubService.use((github) => github.removeIssueLabel(input.repository, input.number, input.label))
 )
+||||||| dea1d03
+=======
 const openUrlAtom = githubRuntime.fn<string>()((url) => BrowserOpener.use((browser) => browser.openUrl(url)))
 
 const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferred: PullRequestMergeMethod | undefined): PullRequestMergeMethod => {
@@ -873,6 +1095,7 @@ const pickInitialMergeMethod = (allowed: RepositoryMergeMethods | null, preferre
 	if (preferred && allowed[preferred]) return preferred
 	return allowedMergeMethodList(allowed)[0] ?? pullRequestMergeMethods[0]
 }
+>>>>>>> kitlangton/main
 
 const centeredOffset = (outer: number, inner: number) => Math.floor((outer - inner) / 2)
 
@@ -892,6 +1115,19 @@ const pullRequestFilterScore = (pullRequest: PullRequestItem, query: string) => 
 		return matchIndex >= 0 ? [index * 1000 + matchIndex] : []
 	})
 	return scores.length > 0 ? Math.min(...scores) : null
+}
+
+<<<<<<< HEAD
+const pullRequestMetadataText = (pullRequest: PullRequestItem) => {
+	const lines = [
+		pullRequest.title,
+		`${pullRequest.repository} #${pullRequest.number}`,
+		pullRequest.url,
+	]
+	const review = reviewLabel(pullRequest)
+	if (review) lines.push(`review: ${review}`)
+	if (pullRequest.checkSummary) lines.push(pullRequest.checkSummary)
+	return lines.join("\n")
 }
 
 const issueMetadataText = (issue: IssueItem) => {
@@ -949,7 +1185,17 @@ const auxiliaryActionSpec = (item: Pick<AuxiliaryItem, "action" | "repository" |
 	return null
 }
 
+||||||| dea1d03
+const pullRequestMetadataText = (pullRequest: PullRequestItem) => {
+	const lines = [pullRequest.title, `${pullRequest.repository} #${pullRequest.number}`, pullRequest.url]
+	const review = reviewLabel(pullRequest)
+	if (review) lines.push(`review: ${review}`)
+	if (pullRequest.checkSummary) lines.push(pullRequest.checkSummary)
+	return lines.join("\n")
+}
 
+=======
+>>>>>>> kitlangton/main
 const pullRequestDetailKey = (pullRequest: PullRequestItem) => `${pullRequest.url}:${pullRequest.headRefOid}`
 const pullRequestRevisionAtomKey = (pullRequest: PullRequestItem) => `${pullRequest.repository}\u0000${pullRequest.number}\u0000${pullRequest.headRefOid}`
 const parsePullRequestRevisionAtomKey = (key: string, label: string) => {
@@ -1142,8 +1388,12 @@ export const App = () => {
 	const closeActiveModal = () => setActiveModal(initialModal)
 	const labelModalActive = Modal.$is("Label")(activeModal)
 	const closeModalActive = Modal.$is("Close")(activeModal)
+<<<<<<< HEAD
 	const confirmActionModalActive = Modal.$is("ConfirmAction")(activeModal)
+||||||| dea1d03
+=======
 	const pullRequestStateModalActive = Modal.$is("PullRequestState")(activeModal)
+>>>>>>> kitlangton/main
 	const mergeModalActive = Modal.$is("Merge")(activeModal)
 	const commentModalActive = Modal.$is("Comment")(activeModal)
 	const commentThreadModalActive = Modal.$is("CommentThread")(activeModal)
@@ -1155,8 +1405,12 @@ export const App = () => {
 	const commitListModalActive = Modal.$is("CommitList")(activeModal)
 	const labelModal: LabelModalState = labelModalActive ? activeModal : initialLabelModalState
 	const closeModal: CloseModalState = closeModalActive ? activeModal : initialCloseModalState
+<<<<<<< HEAD
 	const confirmActionModal: ConfirmActionModalState = confirmActionModalActive ? activeModal : initialConfirmActionModalState
+||||||| dea1d03
+=======
 	const pullRequestStateModal: PullRequestStateModalState = pullRequestStateModalActive ? activeModal : initialPullRequestStateModalState
+>>>>>>> kitlangton/main
 	const mergeModal: MergeModalState = mergeModalActive ? activeModal : initialMergeModalState
 	const commentModal: CommentModalState = commentModalActive ? activeModal : initialCommentModalState
 	const commentThreadModal: CommentThreadModalState = commentThreadModalActive ? activeModal : initialCommentThreadModalState
@@ -1178,8 +1432,12 @@ export const App = () => {
 		})
 	const setLabelModal = makeModalSetter("Label")
 	const setCloseModal = makeModalSetter("Close")
+<<<<<<< HEAD
 	const setConfirmActionModal = makeModalSetter("ConfirmAction")
+||||||| dea1d03
+=======
 	const setPullRequestStateModal = makeModalSetter("PullRequestState")
+>>>>>>> kitlangton/main
 	const setMergeModal = makeModalSetter("Merge")
 	const setCommentModal = makeModalSetter("Comment")
 	const setCommentThreadModal = makeModalSetter("CommentThread")
@@ -1219,7 +1477,13 @@ export const App = () => {
 	const toggleDraftStatus = useAtomSet(toggleDraftAtom, { mode: "promise" })
 	const listPullRequestReviewComments = useAtomSet(listPullRequestReviewCommentsAtom, { mode: "promise" })
 	const listPullRequestComments = useAtomSet(listPullRequestCommentsAtom, { mode: "promise" })
+<<<<<<< HEAD
+	const listPullRequestConversation = useAtomSet(listPullRequestConversationAtom, { mode: "promise" })
 	const listIssueComments = useAtomSet(listIssueCommentsAtom, { mode: "promise" })
+||||||| dea1d03
+	const listPullRequestConversation = useAtomSet(listPullRequestConversationAtom, { mode: "promise" })
+=======
+>>>>>>> kitlangton/main
 	const getPullRequestMergeInfo = useAtomSet(getPullRequestMergeInfoAtom, { mode: "promise" })
 	const getRepositoryMergeMethods = useAtomSet(getRepositoryMergeMethodsAtom, { mode: "promise" })
 	const mergePullRequest = useAtomSet(mergePullRequestAtom, { mode: "promise" })
@@ -1230,15 +1494,20 @@ export const App = () => {
 	const createPullRequestIssueComment = useAtomSet(createPullRequestIssueCommentAtom, { mode: "promise" })
 	const replyToReviewComment = useAtomSet(replyToReviewCommentAtom, { mode: "promise" })
 	const submitPullRequestReview = useAtomSet(submitPullRequestReviewAtom, { mode: "promise" })
+	const createIssueComment = useAtomSet(createIssueCommentAtom, { mode: "promise" })
 	const copyToClipboard = useAtomSet(copyToClipboardAtom, { mode: "promise" })
 	const openInBrowser = useAtomSet(openInBrowserAtom, { mode: "promise" })
+<<<<<<< HEAD
 	const openIssueInBrowser = useAtomSet(openIssueInBrowserAtom, { mode: "promise" })
 	const openAuxiliaryInBrowser = useAtomSet(openAuxiliaryInBrowserAtom, { mode: "promise" })
 	const markNotificationRead = useAtomSet(markNotificationReadAtom, { mode: "promise" })
 	const unstarRepository = useAtomSet(unstarRepositoryAtom, { mode: "promise" })
 	const unwatchRepository = useAtomSet(unwatchRepositoryAtom, { mode: "promise" })
 	const loadAuxiliarySurface = useAtomSet(loadAuxiliarySurfaceAtom, { mode: "promise" })
+||||||| dea1d03
+=======
 	const openUrl = useAtomSet(openUrlAtom, { mode: "promise" })
+>>>>>>> kitlangton/main
 	const terminalWidth = width ?? 100
 	const terminalHeight = height ?? 24
 	const contentWidth = Math.max(1, terminalWidth)
@@ -1359,6 +1628,7 @@ export const App = () => {
 	const visibleIssues = useAtomValue(visibleIssuesAtom)
 	const visibleAuxiliaryItems = useAtomValue(visibleAuxiliaryItemsAtom)
 	const selectedPullRequest = useAtomValue(selectedPullRequestAtom)
+<<<<<<< HEAD
 	const selectedIssue = useAtomValue(selectedIssueAtom)
 	const selectedAuxiliaryItem = useAtomValue(selectedAuxiliaryItemAtom)
 	const selectedIssueCommentsKey = selectedIssue ? issueCommentsKey(selectedIssue) : null
@@ -1368,8 +1638,13 @@ export const App = () => {
 		&& selectedIssue.timeline.length < selectedIssue.comments
 		&& selectedIssueCommentsState === undefined
 	const selectedIssueCommentsLoading = selectedIssueCommentsState === "loading" || selectedIssueCommentsPending
+||||||| dea1d03
+	const pullRequestConversation = useAtomValue(pullRequestConversationAtom)
+	const pullRequestConversationLoaded = useAtomValue(pullRequestConversationLoadedAtom)
+=======
 	const pullRequestComments = useAtomValue(pullRequestCommentsAtom)
 	const pullRequestCommentsLoaded = useAtomValue(pullRequestCommentsLoadedAtom)
+>>>>>>> kitlangton/main
 	const selectedRepository = viewRepository(activeView)
 	const selectedIssueRepository = issueViewRepository(activeIssueView)
 	const activeAuxiliaryRepository = activeSurface === "discussions" ? discussionRepository : activeSurface === "notifications" ? notificationRepository : null
@@ -1425,10 +1700,16 @@ export const App = () => {
 	}) : [], [activeSurface, visibleAuxiliaryGroups, effectiveAuxiliaryStatus, auxiliaryError, visibleFilterText, filterMode, filterQuery])
 	const selectedAuxiliaryRowIndex = auxiliaryListRowIndex(auxiliaryListRows, selectedAuxiliaryItem?.id ?? null)
 	const selectedDiffKey = useAtomValue(selectedDiffKeyAtom)
+<<<<<<< HEAD
+||||||| dea1d03
+	const selectedConversationItems = selectedDiffKey ? (pullRequestConversation[selectedDiffKey] ?? []) : []
+	const selectedConversationStatus: DetailConversationStatus = selectedDiffKey ? (pullRequestConversationLoaded[selectedDiffKey] ?? "idle") : "idle"
+=======
 	// Stabilize the reference so the orderedComments memo only refires when the
 	// underlying comment array actually changes (not every App re-render).
 	const selectedComments = useMemo(() => (selectedDiffKey ? (pullRequestComments[selectedDiffKey] ?? []) : []), [selectedDiffKey, pullRequestComments])
 	const selectedCommentsStatus: DetailCommentsStatus = selectedDiffKey ? (pullRequestCommentsLoaded[selectedDiffKey] ?? "idle") : "idle"
+>>>>>>> kitlangton/main
 	const selectedDiffState = useAtomValue(selectedDiffStateAtom)
 	const effectiveDiffRenderView = contentWidth >= 100 ? diffRenderView : "unified"
 	const readyDiffFiles = useMemo(
@@ -1454,6 +1735,10 @@ export const App = () => {
 	const selectedDiffCommentThreadKey = selectedDiffKey && selectedDiffCommentAnchor ? `${selectedDiffKey}:${diffCommentLocationKey(selectedDiffCommentAnchor)}` : null
 	const selectedDiffCommentThread = selectedDiffCommentThreadKey ? diffCommentThreads[selectedDiffCommentThreadKey] ?? [] : []
 	const selectedDiffCommentLabel = selectedDiffCommentAnchor ? diffCommentAnchorLabel(selectedDiffCommentAnchor) : null
+	const pullRequestConversation = useAtomValue(pullRequestConversationAtom)
+	const pullRequestConversationLoaded = useAtomValue(pullRequestConversationLoadedAtom)
+	const selectedConversationItems = selectedDiffKey ? (pullRequestConversation[selectedDiffKey] ?? []) : []
+	const selectedConversationStatus: DetailConversationStatus = selectedDiffKey ? (pullRequestConversationLoaded[selectedDiffKey] ?? "idle") : "idle"
 	const diffLineColorContextKey = selectedDiffKey ? `${selectedDiffKey}:${effectiveDiffRenderView}:${diffWrapMode}` : null
 	const groupStarts = useAtomValue(groupStartsAtom)
 	const issueGroupStarts = useAtomValue(issueGroupStartsAtom)
@@ -1527,6 +1812,20 @@ export const App = () => {
 		if (detailPrefetchTimeoutRef.current !== null) clearTimeout(detailPrefetchTimeoutRef.current)
 		setLoadingMoreKey(null)
 		setPullRequestOverrides({})
+<<<<<<< HEAD
+||||||| dea1d03
+		if (options.resetTransientState) {
+			setRecentlyCompletedPullRequests({})
+			setPullRequestConversation({})
+			setPullRequestConversationLoaded({})
+		}
+=======
+		if (options.resetTransientState) {
+			setRecentlyCompletedPullRequests({})
+			setPullRequestComments({})
+			setPullRequestCommentsLoaded({})
+		}
+>>>>>>> kitlangton/main
 		if (message) {
 			setNotice(null)
 			setRefreshCompletionMessage(message)
@@ -2240,6 +2539,7 @@ export const App = () => {
 	const isHydratingPullRequestDetails = pullRequestStatus === "ready" && selectedPullRequest?.state === "open" && !selectedPullRequest.detailLoaded
 	const isHydratingIssueDetails = issueStatus === "ready" && selectedIssue !== null && (!selectedIssue.detailLoaded || selectedIssueCommentsLoading)
 	const isRefreshingPullRequests = pullRequestResult.waiting && pullRequestLoad !== null
+<<<<<<< HEAD
 	const isRefreshingIssues = issueResult.waiting && issueLoad !== null
 	const isRefreshingAuxiliary = (auxiliaryResult.waiting || currentAuxiliaryLoadProgress?._tag === "loading") && auxiliaryLoad !== null
 	const hasActiveLoadingIndicator = (activeSurface === "issues"
@@ -2247,23 +2547,49 @@ export const App = () => {
 		: activeSurface === "pullRequests"
 			? pullRequestResult.waiting || isHydratingPullRequestDetails
 			: auxiliaryResult.waiting)
-		|| isLoadingMorePullRequests
-		|| selectedCommentsStatus === "loading"
-		|| labelModal.loading
-		|| closeModal.running
-		|| confirmActionModal.running
-		|| pullRequestStateModal.running
-		|| mergeModal.loading
-		|| mergeModal.running
-		|| submitReviewModal.running
-		|| selectedDiffState?._tag === "Loading"
+		|| labelModal.loading || closeModal.running || confirmActionModal.running || mergeModal.loading || mergeModal.running || submitReviewModal.running || selectedDiffState?._tag === "Loading"
+	const loadingIndicator = LOADING_FRAMES[loadingFrame % LOADING_FRAMES.length]!
+||||||| dea1d03
+	const hasActiveLoadingIndicator =
+		pullRequestResult.waiting ||
+		isHydratingPullRequestDetails ||
+		isLoadingMorePullRequests ||
+		labelModal.loading ||
+		closeModal.running ||
+		mergeModal.loading ||
+		mergeModal.running ||
+		submitReviewModal.running ||
+		selectedDiffState?._tag === "Loading"
 	const loadingIndicator = SPINNER_FRAMES[loadingFrame % SPINNER_FRAMES.length]!
+=======
+	const hasActiveLoadingIndicator =
+		pullRequestResult.waiting ||
+		isHydratingPullRequestDetails ||
+		isLoadingMorePullRequests ||
+		selectedCommentsStatus === "loading" ||
+		labelModal.loading ||
+		closeModal.running ||
+		pullRequestStateModal.running ||
+		mergeModal.loading ||
+		mergeModal.running ||
+		submitReviewModal.running ||
+		selectedDiffState?._tag === "Loading"
+	const loadingIndicator = SPINNER_FRAMES[loadingFrame % SPINNER_FRAMES.length]!
+>>>>>>> kitlangton/main
 
 	useEffect(() => {
 		if (!hasActiveLoadingIndicator) return
 		const interval = globalThis.setInterval(() => {
+<<<<<<< HEAD
+			setLoadingFrame((current) => (current + 1) % LOADING_FRAMES.length)
+		}, 120)
+||||||| dea1d03
+			setLoadingFrame((current) => current + 1)
+		}, 120)
+=======
 			setLoadingFrame((current) => current + 1)
 		}, SPINNER_INTERVAL_MS)
+>>>>>>> kitlangton/main
 		return () => globalThis.clearInterval(interval)
 	}, [hasActiveLoadingIndicator])
 
@@ -2313,6 +2639,7 @@ export const App = () => {
 		filterText: visibleFilterText,
 	})
 	const isSelectedPullRequestDetailLoading = selectedPullRequest !== null && !selectedPullRequest.detailLoaded
+<<<<<<< HEAD
 	const isSelectedIssueDetailLoading = selectedIssue !== null && !selectedIssue.detailLoaded
 	const detailLoadingContent: DetailPlaceholderContent = selectedPullRequest ? {
 		title: `${loadingIndicator} Loading pull request details`,
@@ -2322,9 +2649,28 @@ export const App = () => {
 		title: `${loadingIndicator} Loading issue details`,
 		hint: `${selectedIssue.repository} #${selectedIssue.number}`,
 	} : detailPlaceholderContent
+	const detailJunctions = isSelectedPullRequestDetailLoading ? [] : getDetailJunctionRows({
+		pullRequest: selectedPullRequest,
+		paneWidth: rightPaneWidth,
+		showChecks: true,
+		contentWidth: rightContentWidth,
+		bodyScrollTop: 0,
+		bodyViewportHeight: Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true)),
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
+	})
 	const issueDetailJunctions = isSelectedIssueDetailLoading ? [] : getIssueDetailJunctionRows(selectedIssue, rightPaneWidth)
 	const auxiliaryDetailJunctions = getAuxiliaryDetailJunctionRows(selectedAuxiliaryItem, rightPaneWidth)
 
+||||||| dea1d03
+	const detailLoadingContent: DetailPlaceholderContent = selectedPullRequest
+		? {
+				title: `${loadingIndicator} Loading pull request details`,
+				hint: `${selectedPullRequest.repository} #${selectedPullRequest.number}`,
+			}
+		: detailPlaceholderContent
+=======
+>>>>>>> kitlangton/main
 	const halfPage = Math.max(1, Math.floor(wideBodyHeight / 2))
 
 	const loadPullRequestReviewComments = (pullRequest: PullRequestItem, force = false) => {
@@ -2417,8 +2763,12 @@ export const App = () => {
 		diffCommentLineColorsRef.current = { contextKey: null, entries: [] }
 		setDiffFullView(true)
 		setDetailFullView(false)
+<<<<<<< HEAD
 		setDiffCommentMode(false)
+||||||| dea1d03
+=======
 		setCommentsViewActive(false)
+>>>>>>> kitlangton/main
 		setDiffFileIndex(0)
 		setDiffScrollTop(0)
 		setDiffRenderView(contentWidth >= 100 ? "split" : "unified")
@@ -2707,9 +3057,19 @@ export const App = () => {
 			return
 		}
 
+<<<<<<< HEAD
 		const threadKey = selectedDiffCommentThreadKey
 		const target = selectedDiffCommentAnchor
+||||||| dea1d03
+		const targetRange = selectedDiffCommentRange
+		const target = targetRange?.end ?? selectedDiffCommentAnchor
+		const threadKey = selectedDiffKey ? diffCommentThreadMapKey(selectedDiffKey, target) : null
+=======
+		const targetRange = selectedDiffCommentRange
+		const target = targetRange?.end ?? selectedDiffCommentAnchor
 		const key = pullRequestDiffKey(selectedPullRequest)
+		const threadKey = selectedDiffKey ? diffCommentThreadMapKey(selectedDiffKey, target) : null
+>>>>>>> kitlangton/main
 		const optimisticComment = {
 			id: `local:${Date.now()}`,
 			path: target.path,
@@ -2765,6 +3125,100 @@ export const App = () => {
 		})
 	}
 
+	const submitIssueComment = () => {
+		if (!selectedIssue) return
+		const body = commentModal.body.trim()
+		if (body.length === 0) {
+			setCommentModal((current) => ({ ...current, error: "Write a comment before saving." }))
+			return
+		}
+
+		const targetIssue = selectedIssue
+		const previousIssue = targetIssue
+		const optimisticComment = {
+			id: `local:${Date.now()}`,
+			author: username ?? "you",
+			body,
+			createdAt: new Date(),
+			updatedAt: null,
+			url: null,
+		} satisfies IssueComment
+
+		updateIssue(targetIssue.url, (issue) => ({
+			...issue,
+			comments: issue.comments + 1,
+			timeline: [...issue.timeline, optimisticComment],
+		}))
+		closeActiveModal()
+		flashNotice(`Commenting on #${targetIssue.number}`)
+		void createIssueComment({ repository: targetIssue.repository, number: targetIssue.number, body })
+			.then((comment) => {
+<<<<<<< HEAD
+				updateIssue(targetIssue.url, (issue) => ({
+					...issue,
+					timeline: issue.timeline.map((existing) => existing.id === optimisticComment.id ? comment : existing),
+				}))
+				flashNotice(`Commented on #${targetIssue.number}`)
+||||||| dea1d03
+				if (threadKey) {
+					setDiffCommentThreads((current) => ({
+						...current,
+						[threadKey]: (current[threadKey] ?? []).map((existing) => (existing.id === optimisticComment.id ? comment : existing)),
+					}))
+				}
+				flashNotice(`Commented on ${target.path}:${target.line}`)
+=======
+				if (threadKey) {
+					setDiffCommentThreads((current) => ({
+						...current,
+						[threadKey]: (current[threadKey] ?? []).map((existing) => (existing.id === optimisticComment.id ? comment : existing)),
+					}))
+				}
+				setPullRequestComments((current) => ({
+					...current,
+					[key]: (current[key] ?? []).map((existing) => (existing.id === optimisticComment.id ? reviewCommentAsPullRequestComment(comment) : existing)),
+				}))
+				flashNotice(`Commented on ${target.path}:${target.line}`)
+>>>>>>> kitlangton/main
+			})
+			.catch((error) => {
+<<<<<<< HEAD
+				updateIssue(targetIssue.url, () => previousIssue)
+||||||| dea1d03
+				if (threadKey) {
+					setDiffCommentThreads((current) => {
+						const next = { ...current }
+						const comments = (next[threadKey] ?? []).filter((comment) => comment.id !== optimisticComment.id)
+						if (comments.length > 0) next[threadKey] = comments
+						else delete next[threadKey]
+						return next
+					})
+				}
+=======
+				if (threadKey) {
+					setDiffCommentThreads((current) => {
+						const next = { ...current }
+						const comments = (next[threadKey] ?? []).filter((comment) => comment.id !== optimisticComment.id)
+						if (comments.length > 0) next[threadKey] = comments
+						else delete next[threadKey]
+						return next
+					})
+				}
+				setPullRequestComments((current) => ({
+					...current,
+					[key]: (current[key] ?? []).filter((comment) => comment.id !== optimisticComment.id),
+				}))
+>>>>>>> kitlangton/main
+				flashNotice(errorMessage(error))
+			})
+	}
+
+<<<<<<< HEAD
+	const submitActiveComment = () => {
+		if (activeSurface === "issues") submitIssueComment()
+		else submitDiffComment()
+||||||| dea1d03
+=======
 	const openNewIssueCommentModal = () => {
 		if (!selectedPullRequest) return
 		setCommentModal({ ...initialCommentModalState, target: { kind: "issue" } })
@@ -2829,7 +3283,7 @@ export const App = () => {
 		return body
 	}
 
-	const submitIssueCommentViaCommentModal = () => {
+	const submitIssueComment = () => {
 		if (!selectedPullRequest) return
 		const body = requireCommentBody()
 		if (body === null) return
@@ -2852,7 +3306,7 @@ export const App = () => {
 		const parent = selectedComments.find((entry) => entry._tag === "review-comment" && entry.id === target.inReplyTo)
 		const reviewParent = parent?._tag === "review-comment" ? parent : null
 		const key = pullRequestDiffKey(selectedPullRequest)
-		const threadKey = reviewParent ? `${key}:${diffCommentLocationKey(reviewParent)}` : null
+		const threadKey = reviewParent ? diffCommentThreadMapKey(key, reviewParent) : null
 		submitOptimisticComment({
 			key,
 			optimistic: {
@@ -2900,12 +3354,13 @@ export const App = () => {
 				submitDiffComment()
 				return
 			case "issue":
-				submitIssueCommentViaCommentModal()
+				submitIssueComment()
 				return
 			case "reply":
 				submitReplyComment()
 				return
 		}
+>>>>>>> kitlangton/main
 	}
 
 	const confirmSubmitReview = () => {
@@ -2939,6 +3394,7 @@ export const App = () => {
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
+<<<<<<< HEAD
 	const openSelectedIssueInBrowser = () => {
 		if (!selectedIssue) return
 		void openIssueInBrowser(selectedIssue)
@@ -2950,12 +3406,12 @@ export const App = () => {
 		if (!selectedAuxiliaryItem) return
 		void openAuxiliaryInBrowser(selectedAuxiliaryItem)
 			.then(() => flashNotice(`Opened ${selectedAuxiliaryItem.title}`))
-			.catch((error) => flashNotice(errorMessage(error)))
-	}
-
+||||||| dea1d03
+=======
 	const openLinkInBrowser = (url: string) => {
 		void openUrl(url)
 			.then(() => flashNotice(`Opened ${url}`))
+>>>>>>> kitlangton/main
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
@@ -2966,6 +3422,7 @@ export const App = () => {
 			.catch((error) => flashNotice(errorMessage(error)))
 	}
 
+<<<<<<< HEAD
 	const copySelectedIssueMetadata = () => {
 		if (!selectedIssue) return
 		void copyToClipboard(issueMetadataText(selectedIssue))
@@ -3047,6 +3504,40 @@ export const App = () => {
 			})
 	}
 
+	const toggleSelectedPullRequestDraftStatus = () => {
+		if (!selectedPullRequest) return
+		const previousPullRequest = selectedPullRequest
+		const nextReviewStatus = selectedPullRequest.reviewStatus === "draft" ? "review" : "draft"
+		updatePullRequest(selectedPullRequest.url, (pullRequest) => ({
+			...pullRequest,
+			reviewStatus: nextReviewStatus,
+		}))
+		void toggleDraftStatus({ repository: selectedPullRequest.repository, number: selectedPullRequest.number, isDraft: selectedPullRequest.reviewStatus === "draft" })
+			.then(() => {
+				flashNotice(selectedPullRequest.reviewStatus === "draft" ? `Marked #${selectedPullRequest.number} ready` : `Marked #${selectedPullRequest.number} draft`)
+			})
+			.catch((error) => {
+				updatePullRequest(selectedPullRequest.url, () => previousPullRequest)
+				flashNotice(errorMessage(error))
+			})
+||||||| dea1d03
+	const toggleSelectedPullRequestDraftStatus = () => {
+		if (!selectedPullRequest) return
+		const previousPullRequest = selectedPullRequest
+		const nextReviewStatus = selectedPullRequest.reviewStatus === "draft" ? "review" : "draft"
+		updatePullRequest(selectedPullRequest.url, (pullRequest) => ({
+			...pullRequest,
+			reviewStatus: nextReviewStatus,
+		}))
+		void toggleDraftStatus({ repository: selectedPullRequest.repository, number: selectedPullRequest.number, isDraft: selectedPullRequest.reviewStatus === "draft" })
+			.then(() => {
+				flashNotice(selectedPullRequest.reviewStatus === "draft" ? `Marked #${selectedPullRequest.number} ready` : `Marked #${selectedPullRequest.number} draft`)
+			})
+			.catch((error) => {
+				updatePullRequest(selectedPullRequest.url, () => previousPullRequest)
+				flashNotice(errorMessage(error))
+			})
+=======
 	const openPullRequestStateModal = () => {
 		if (!selectedPullRequest || selectedPullRequest.state !== "open") return
 		setPullRequestStateModal({
@@ -3088,6 +3579,7 @@ export const App = () => {
 			const message = errorMessage(error)
 			flashNotice(message)
 		})
+>>>>>>> kitlangton/main
 	}
 
 	const openCloseModal = () => {
@@ -3215,11 +3707,22 @@ export const App = () => {
 	const moveThemeSelection = (delta: number) => {
 		const filteredThemes = filterThemeDefinitions(themeModalRef.current.query, themeModalRef.current.tone)
 		if (filteredThemes.length === 0) return
+<<<<<<< HEAD
+		const currentIndex = Math.max(0, filteredThemes.findIndex((theme) => theme.id === themeIdRef.current))
+		const selectedIndex = Math.max(0, Math.min(filteredThemes.length - 1, currentIndex + delta))
+||||||| dea1d03
+		const currentIndex = Math.max(
+			0,
+			filteredThemes.findIndex((theme) => theme.id === themeIdRef.current),
+		)
+		const selectedIndex = Math.max(0, Math.min(filteredThemes.length - 1, currentIndex + delta))
+=======
 		const currentIndex = Math.max(
 			0,
 			filteredThemes.findIndex((theme) => theme.id === themeIdRef.current),
 		)
 		const selectedIndex = wrapIndex(currentIndex + delta, filteredThemes.length)
+>>>>>>> kitlangton/main
 		if (selectedIndex === currentIndex) return
 		const theme = filteredThemes[selectedIndex]
 		if (theme) previewTheme(theme.id)
@@ -3347,19 +3850,44 @@ export const App = () => {
 		const { repository, number } = info
 		const targetPullRequest = pullRequests.find((pullRequest) => pullRequest.repository === repository && pullRequest.number === number)
 		const previousPullRequest = targetPullRequest ?? null
+		const previousMergeInfo = mergeModal.info
 
+<<<<<<< HEAD
+		if (targetPullRequest && option.optimisticAutoMergeEnabled !== undefined) {
+			updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, autoMergeEnabled: option.optimisticAutoMergeEnabled! }))
+			setMergeModal((current) => ({
+				...current,
+				info: current.info ? { ...current.info, autoMergeEnabled: option.optimisticAutoMergeEnabled! } : current.info,
+			}))
+||||||| dea1d03
+		if (targetPullRequest && option.optimisticAutoMergeEnabled !== undefined) {
+			updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, autoMergeEnabled: option.optimisticAutoMergeEnabled! }))
+=======
 		if (targetPullRequest && markReady) {
 			updatePullRequest(targetPullRequest.url, (pullRequest) => (pullRequest.reviewStatus === "draft" ? { ...pullRequest, reviewStatus: "none" } : pullRequest))
+>>>>>>> kitlangton/main
 		}
+<<<<<<< HEAD
+||||||| dea1d03
+		if (targetPullRequest && option.optimisticState === "merged") markPullRequestCompleted(targetPullRequest, "merged")
+=======
 		if (targetPullRequest && kindDef.optimisticAutoMergeEnabled !== undefined) {
 			updatePullRequest(targetPullRequest.url, (pullRequest) => ({ ...pullRequest, autoMergeEnabled: kindDef.optimisticAutoMergeEnabled! }))
 		}
-		if (targetPullRequest && kindDef.optimisticState === "merged") updatePullRequest(targetPullRequest.url, (pr) => ({ ...pr, state: "merged" as const }))
+		if (targetPullRequest && kindDef.optimisticState === "merged") markPullRequestCompleted(targetPullRequest, "merged")
 
 		const kind = kindDef.kind
 		const action: PullRequestMergeAction = kind === "disable-auto" ? { kind } : { kind, method }
 		const pastTense = kindDef.pastTense(method)
+>>>>>>> kitlangton/main
 
+<<<<<<< HEAD
+		setMergeModal((current) => ({ ...current, running: true, error: null }))
+		void mergePullRequest({ repository, number, action: option.action })
+||||||| dea1d03
+		closeActiveModal()
+		void mergePullRequest({ repository, number, action: option.action })
+=======
 		closeActiveModal()
 		if (!kindDef.methodAgnostic) {
 			setLastUsedMergeMethod((current) => ({ ...current, [repository]: method }))
@@ -3375,19 +3903,46 @@ export const App = () => {
 		}
 
 		void run()
+>>>>>>> kitlangton/main
 			.then(() => {
+<<<<<<< HEAD
+				if (option.refreshOnSuccess && previousPullRequest) {
+					setRecentlyCompletedPullRequests((current) => ({
+						...current,
+						[previousPullRequest.url]: {
+							...previousPullRequest,
+							state: "merged",
+							autoMergeEnabled: false,
+						},
+					}))
+				}
+				closeActiveModal()
+				if (option.refreshOnSuccess) {
+					refreshPullRequests(`${option.pastTense} #${number}`)
+||||||| dea1d03
+				if (option.refreshOnSuccess) {
+					refreshPullRequests(`${option.pastTense} #${number}`)
+=======
 				if (kindDef.refreshOnSuccess) {
 					refreshPullRequests(`${pastTense} #${number}`)
+>>>>>>> kitlangton/main
 				} else {
 					flashNotice(`${pastTense} #${number}`)
 				}
 			})
 			.catch((error) => {
+<<<<<<< HEAD
+				if (previousPullRequest) updatePullRequest(previousPullRequest.url, () => previousPullRequest)
+				setMergeModal((current) => ({ ...current, running: false, info: previousMergeInfo, error: errorMessage(error) }))
+||||||| dea1d03
+				if (previousPullRequest) restoreOptimisticPullRequest(previousPullRequest)
+=======
 				if (markReady && markedReady) {
 					refreshPullRequests(`Merge failed for #${number}`)
 				} else if (previousPullRequest) {
-					if (previousPullRequest) updatePullRequest(previousPullRequest.url, () => previousPullRequest)
+					restoreOptimisticPullRequest(previousPullRequest)
 				}
+>>>>>>> kitlangton/main
 				flashNotice(errorMessage(error))
 			})
 	}
@@ -3742,6 +4297,15 @@ export const App = () => {
 	})()
 	// Dynamic commands always pin to the top of the palette; they came directly from the
 	// user's typed input so they shouldn't be filtered by fuzzy score against themselves.
+<<<<<<< HEAD
+||||||| dea1d03
+	const staticPaletteCommands = commandPaletteActive
+		? filterCommands(
+				appCommands.filter((command) => command.id !== "command.open" && commandEnabled(command)),
+				commandPalette.query,
+			)
+		: []
+=======
 	const staticPaletteCommands = commandPaletteActive
 		? filterCommands(
 				appCommands.filter((command) => command.id !== "command.open" && commandEnabled(command)),
@@ -3749,12 +4313,92 @@ export const App = () => {
 			)
 		: []
 	const activePaletteScope: CommandScope | null = commentsViewActive ? "Comments" : diffFullView ? "Diff" : detailFullView ? "Pull request" : null
+>>>>>>> kitlangton/main
 	const commandPaletteCommands = commandPaletteActive
+<<<<<<< HEAD
+		? [
+			...dynamicPaletteCommands,
+			...sortCommandsByScope(filterCommands(appCommands.filter((command) => command.id !== "command.open" && commandEnabled(command)), commandPalette.query)),
+		]
+||||||| dea1d03
+		? [...dynamicPaletteCommands, ...(commandPalette.query.trim().length > 0 ? staticPaletteCommands : sortCommandsByScope(staticPaletteCommands))]
+=======
 		? [...dynamicPaletteCommands, ...(commandPalette.query.trim().length > 0 ? staticPaletteCommands : sortCommandsByActiveScope(staticPaletteCommands, activePaletteScope))]
+>>>>>>> kitlangton/main
 		: []
 	const selectedCommandIndex = clampCommandIndex(commandPalette.selectedIndex, commandPaletteCommands)
 	const selectedCommand = commandPaletteCommands[selectedCommandIndex] ?? null
 
+<<<<<<< HEAD
+	const moveMergeSelection = (delta: -1 | 1) => setMergeModal((current) => {
+		const max = Math.max(0, availableMergeActions(mergeModal.info).length - 1)
+		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
+	})
+
+	const scrollCommentThread = (delta: number) => setCommentThreadModal((current) => ({
+		...current,
+		scrollOffset: Math.max(0, current.scrollOffset + delta),
+	}))
+
+	const moveLabelSelection = (delta: -1 | 1) => setLabelModal((current) => {
+		const max = Math.max(0, filterLabels(labelModal.availableLabels, labelModal.query).length - 1)
+		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
+	})
+
+	const moveChangedFileSelection = (delta: -1 | 1) => setChangedFilesModal((current) => {
+		const max = Math.max(0, changedFileResults.length - 1)
+		const selectedIndex = Math.max(0, Math.min(max, current.selectedIndex + delta))
+		return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+	})
+
+	const moveSubmitReviewActionSelection = (delta: -1 | 1) => setSubmitReviewModal((current) => {
+		const max = Math.max(0, submitReviewOptions.length - 1)
+		return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)), error: null }
+	})
+
+	const moveCommandPaletteSelection = (delta: -1 | 1) => setCommandPalette((current) => {
+		const selectedIndex = clampCommandIndex(current.selectedIndex + delta, commandPaletteCommands)
+		return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+	})
+||||||| dea1d03
+	// === Helpers used by the keymap layers ===
+	const moveMergeSelection = (delta: -1 | 1) =>
+		setMergeModal((current) => {
+			const max = Math.max(0, availableMergeActions(mergeModal.info).length - 1)
+			return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
+		})
+	const scrollCommentThread = (delta: number) =>
+		setCommentThreadModal((current) => ({
+			...current,
+			scrollOffset: Math.max(0, current.scrollOffset + delta),
+		}))
+	const moveLabelSelection = (delta: -1 | 1) =>
+		setLabelModal((current) => {
+			const max = Math.max(0, filterLabels(labelModal.availableLabels, labelModal.query).length - 1)
+			return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)) }
+		})
+	const moveChangedFileSelection = (delta: -1 | 1) =>
+		setChangedFilesModal((current) => {
+			const max = Math.max(0, changedFileResults.length - 1)
+			const selectedIndex = Math.max(0, Math.min(max, current.selectedIndex + delta))
+			return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+		})
+	const moveSubmitReviewActionSelection = (delta: -1 | 1) =>
+		setSubmitReviewModal((current) => {
+			const max = Math.max(0, submitReviewOptions.length - 1)
+			return { ...current, selectedIndex: Math.max(0, Math.min(max, current.selectedIndex + delta)), error: null }
+		})
+	const moveCommandPaletteSelection = (delta: -1 | 1) =>
+		setCommandPalette((current) => {
+			const selectedIndex = clampCommandIndex(current.selectedIndex + delta, commandPaletteCommands)
+			return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+		})
+	const selectCommandPaletteIndex = (index: number) =>
+		setCommandPalette((current) => {
+			const selectedIndex = clampCommandIndex(index, commandPaletteCommands)
+			return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+		})
+=======
 	// === Helpers used by the keymap layers ===
 	const moveMergeSelection = (delta: -1 | 1) =>
 		setMergeModal((current) => {
@@ -3789,6 +4433,12 @@ export const App = () => {
 			const selectedIndex = wrapIndex(current.selectedIndex + delta, commandPaletteCommands.length)
 			return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
 		})
+	const selectCommandPaletteIndex = (index: number) =>
+		setCommandPalette((current) => {
+			const selectedIndex = clampCommandIndex(index, commandPaletteCommands)
+			return selectedIndex === current.selectedIndex ? current : { ...current, selectedIndex }
+		})
+>>>>>>> kitlangton/main
 	const runCommandPaletteCommand = (command: AppCommand) => {
 		runCommand(command, { notifyDisabled: true, closePalette: true })
 	}
@@ -3895,8 +4545,12 @@ export const App = () => {
 	const appCtx: AppCtx = {
 		commitListModalActive,
 		closeModalActive,
+<<<<<<< HEAD
 		confirmActionModalActive,
+||||||| dea1d03
+=======
 		pullRequestStateModalActive,
+>>>>>>> kitlangton/main
 		mergeModalActive,
 		commentThreadModalActive,
 		changedFilesModalActive,
@@ -3909,16 +4563,8 @@ export const App = () => {
 		filterMode,
 		diffFullView,
 		detailFullView,
-		commentsViewActive,
-		textInputActive:
-			commentModalActive ||
-			commandPaletteActive ||
-			openRepositoryModalActive ||
-			changedFilesModalActive ||
-			submitReviewModalActive ||
-			labelModalActive ||
-			filterMode ||
-			(themeModalActive && themeModal.filterMode),
+<<<<<<< HEAD
+		textInputActive: commentModalActive || commandPaletteActive || openRepositoryModalActive || changedFilesModalActive || submitReviewModalActive || labelModalActive || filterMode || (themeModalActive && themeModal.filterMode),
 		commitListModal: {
 			stepUp: () => setCommitListModal((current) => ({
 				...current,
@@ -3931,10 +4577,46 @@ export const App = () => {
 			openCommitDiff,
 			openInBrowser: openCommitInBrowser,
 			close: closeActiveModal,
+||||||| dea1d03
+		textInputActive:
+			commentModalActive ||
+			commandPaletteActive ||
+			openRepositoryModalActive ||
+			changedFilesModalActive ||
+			submitReviewModalActive ||
+			labelModalActive ||
+			filterMode ||
+			(themeModalActive && themeModal.filterMode),
+		closeModal: {
+			closeModal: closeActiveModal,
+			confirmClose: confirmClosePullRequest,
+=======
+		commentsViewActive,
+		textInputActive:
+			commentModalActive ||
+			commandPaletteActive ||
+			openRepositoryModalActive ||
+			changedFilesModalActive ||
+			submitReviewModalActive ||
+			labelModalActive ||
+			filterMode ||
+			(themeModalActive && themeModal.filterMode),
+		closeModal: {
+			closeModal: closeActiveModal,
+			confirmClose: confirmClosePullRequest,
+>>>>>>> kitlangton/main
 		},
+<<<<<<< HEAD
 		closeModal: { closeModal: closeActiveModal, confirmClose: confirmCloseTarget },
 		confirmActionModal: { closeModal: closeActiveModal, confirmClose: confirmAuxiliaryAction },
+		mergeModal: {
+			availableActionCount: availableMergeActions(mergeModal.info).length,
+||||||| dea1d03
+		mergeModal: {
+			availableActionCount: availableMergeActions(mergeModal.info).length,
+=======
 		pullRequestStateModal: {
+>>>>>>> kitlangton/main
 			closeModal: closeActiveModal,
 			confirmStateChange: confirmPullRequestStateChange,
 			moveSelection: movePullRequestStateSelection,
@@ -3999,7 +4681,13 @@ export const App = () => {
 		openRepositoryModal: { closeModal: closeActiveModal, openFromInput: openRepositoryFromInput },
 		commentModal: {
 			closeModal: closeActiveModal,
+<<<<<<< HEAD
+			submit: submitActiveComment,
+||||||| dea1d03
+			submit: submitDiffComment,
+=======
 			submit: submitCommentModal,
+>>>>>>> kitlangton/main
 			insertNewline: () => editComment((state) => insertText(state, "\n")),
 			moveLeft: () => editComment(editorMoveLeft),
 			moveRight: () => editComment(editorMoveRight),
@@ -4173,14 +4861,15 @@ export const App = () => {
 
 	const fullscreenContentWidth = Math.max(24, contentWidth - 2)
 	const fullscreenBodyLines = Math.max(8, terminalHeight - 8)
+<<<<<<< HEAD
 	const wideFullscreenDetailScrollable = getDetailsPaneHeight({
 		pullRequest: selectedPullRequest,
 		contentWidth: fullscreenContentWidth,
 		bodyLines: DETAIL_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
 		showChecks: true,
-		comments: selectedComments,
-		commentsStatus: selectedCommentsStatus,
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
 	}) > wideBodyHeight
 	const wideFullscreenIssueDetailScrollable = getIssueDetailsPaneHeight({
 		issue: selectedIssue,
@@ -4199,8 +4888,8 @@ export const App = () => {
 		contentWidth: fullscreenContentWidth,
 		bodyLines: DETAIL_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
-		comments: selectedComments,
-		commentsStatus: selectedCommentsStatus,
+		conversationItems: selectedConversationItems,
+		conversationStatus: selectedConversationStatus,
 	}) > wideBodyHeight
 	const narrowFullscreenIssueDetailScrollable = getIssueDetailsPaneHeight({
 		issue: selectedIssue,
@@ -4214,10 +4903,22 @@ export const App = () => {
 		bodyLines: AUXILIARY_BODY_SCROLL_LIMIT,
 		paneWidth: contentWidth,
 	}) > wideBodyHeight
+||||||| dea1d03
+	const fullscreenDetailHeaderHeight = getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout)
+	const fullscreenDetailBodyViewportHeight = Math.max(1, wideBodyHeight - fullscreenDetailHeaderHeight)
+	const fullscreenDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, fullscreenContentWidth, selectedConversationItems, selectedConversationStatus)
+	const fullscreenDetailBodyScrollable = fullscreenDetailBodyHeight > fullscreenDetailBodyViewportHeight
+=======
+	const fullscreenDetailHeaderHeight = getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout)
+	const fullscreenDetailBodyViewportHeight = Math.max(1, wideBodyHeight - fullscreenDetailHeaderHeight)
+	const fullscreenDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, fullscreenContentWidth, selectedComments, selectedCommentsStatus)
+	const fullscreenDetailBodyScrollable = fullscreenDetailBodyHeight > fullscreenDetailBodyViewportHeight
+>>>>>>> kitlangton/main
 	const wideDetailHeaderHeight = getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true)
 	const wideDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideDetailHeaderHeight)
 	const wideDetailBodyHeight = getScrollableDetailBodyHeight(selectedPullRequest, rightContentWidth, selectedComments, selectedCommentsStatus)
 	const wideDetailBodyScrollable = wideDetailBodyHeight > wideDetailBodyViewportHeight
+<<<<<<< HEAD
 	const wideIssueDetailHeaderHeight = getIssueDetailHeaderHeight(selectedIssue, rightPaneWidth)
 	const wideIssueDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideIssueDetailHeaderHeight)
 	const wideIssueDetailBodyHeight = getScrollableIssueBodyHeight(selectedIssue, rightContentWidth)
@@ -4226,6 +4927,30 @@ export const App = () => {
 	const wideAuxiliaryDetailBodyViewportHeight = Math.max(1, wideBodyHeight - wideAuxiliaryDetailHeaderHeight)
 	const wideAuxiliaryDetailBodyHeight = getScrollableAuxiliaryBodyHeight(selectedAuxiliaryItem, rightContentWidth)
 	const wideAuxiliaryDetailBodyScrollable = wideAuxiliaryDetailBodyHeight > wideAuxiliaryDetailBodyViewportHeight
+||||||| dea1d03
+	const detailJunctions = isSelectedPullRequestDetailLoading
+		? []
+		: getDetailJunctionRows({
+				pullRequest: selectedPullRequest,
+				paneWidth: rightPaneWidth,
+				showChecks: true,
+				contentWidth: rightContentWidth,
+				conversationItems: selectedConversationItems,
+				conversationStatus: selectedConversationStatus,
+				bodyScrollTop: detailPreviewScrollTop,
+				bodyViewportHeight: wideDetailBodyViewportHeight,
+			})
+=======
+	const narrowDetailsPaneHeight = getDetailsPaneHeight({
+		pullRequest: selectedPullRequest,
+		contentWidth: fullscreenContentWidth,
+		paneWidth: contentWidth,
+		comments: selectedComments,
+		commentsStatus: selectedCommentsStatus,
+	})
+	const narrowPullRequestListHeight = Math.max(1, wideBodyHeight - narrowDetailsPaneHeight - 1)
+	const widePullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > wideBodyHeight
+	const narrowPullRequestListNeedsScroll = pullRequestStatus === "ready" && pullRequestListRows.length > narrowPullRequestListHeight
 	const detailJunctions = isSelectedPullRequestDetailLoading
 		? []
 		: getDetailJunctionRows({
@@ -4235,8 +4960,10 @@ export const App = () => {
 				contentWidth: rightContentWidth,
 				comments: selectedComments,
 				commentsStatus: selectedCommentsStatus,
+				bodyScrollTop: detailPreviewScrollTop,
 				bodyViewportHeight: wideDetailBodyViewportHeight,
 			})
+>>>>>>> kitlangton/main
 
 	const prListProps = {
 		groups: visibleGroups,
@@ -4252,6 +4979,7 @@ export const App = () => {
 		loadingIndicator,
 		onSelectPullRequest: selectPullRequestByUrl,
 	} as const
+<<<<<<< HEAD
 	const issueListProps = {
 		groups: visibleIssueGroups,
 		selectedUrl: selectedIssue?.url ?? null,
@@ -4276,6 +5004,19 @@ export const App = () => {
 		isFilterEditing: filterMode,
 		onSelectItem: selectAuxiliaryById,
 	} as const
+||||||| dea1d03
+=======
+	const widePullRequestList = (
+		<box paddingLeft={sectionPadding} paddingRight={0}>
+			<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
+		</box>
+	)
+	const narrowPullRequestList = (
+		<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+			<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
+		</box>
+	)
+>>>>>>> kitlangton/main
 
 	const longestLabelName = labelModal.availableLabels.reduce((max, label) => Math.max(max, label.name.length), 0)
 	const labelModalWidth = Math.min(Math.max(42, longestLabelName + 16), 56, contentWidth - 4)
@@ -4301,16 +5042,20 @@ export const App = () => {
 	const closeModalHeight = closeLayout.height
 	const closeModalLeft = closeLayout.left
 	const closeModalTop = closeLayout.top
+<<<<<<< HEAD
 	const confirmActionLayout = sizedModal(46, 72, 12, 12)
 	const confirmActionModalWidth = confirmActionLayout.width
 	const confirmActionModalHeight = confirmActionLayout.height
 	const confirmActionModalLeft = confirmActionLayout.left
 	const confirmActionModalTop = confirmActionLayout.top
+||||||| dea1d03
+=======
 	const pullRequestStateLayout = sizedModal(46, 68, 12, 9)
 	const pullRequestStateModalWidth = pullRequestStateLayout.width
 	const pullRequestStateModalHeight = pullRequestStateLayout.height
 	const pullRequestStateModalLeft = pullRequestStateLayout.left
 	const pullRequestStateModalTop = pullRequestStateLayout.top
+>>>>>>> kitlangton/main
 	const commentLayout = sizedModal(46, 76, 8, 16)
 	const commentModalWidth = commentLayout.width
 	const commentModalHeight = commentLayout.height
@@ -4326,17 +5071,27 @@ export const App = () => {
 	const submitReviewModalHeight = submitReviewLayout.height
 	const submitReviewModalLeft = submitReviewLayout.left
 	const submitReviewModalTop = submitReviewLayout.top
+<<<<<<< HEAD
+	const commentAnchorLabel = selectedDiffCommentAnchor && selectedDiffCommentLabel
+		? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}`
+		: "No diff line selected"
+	const activeCommentAnchorLabel = activeSurface === "issues" && selectedIssue
+		? `${selectedIssue.repository} #${selectedIssue.number}`
+		: commentAnchorLabel
+	const mergeLayout = sizedModal(46, 68, 12, 16)
+||||||| dea1d03
+	const commentAnchorLabel = selectedDiffCommentAnchor && selectedDiffCommentLabel ? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}` : "No diff line selected"
+	const mergeLayout = sizedModal(46, 68, 12, 16)
+=======
 	const commentAnchorLabel = ((): string => {
 		if (commentModalActive) {
-			if (commentModal.target.kind === "issue") return selectedIssue
-				? `${selectedIssue.repository} #${selectedIssue.number}`
-				: selectedPullRequest ? `New comment on #${selectedPullRequest.number}` : "New comment"
+			if (commentModal.target.kind === "issue") return selectedPullRequest ? `New comment on #${selectedPullRequest.number}` : "New comment"
 			if (commentModal.target.kind === "reply") return `Reply on ${commentModal.target.anchorLabel}`
 		}
 		return selectedDiffCommentAnchor && selectedDiffCommentLabel ? `${selectedDiffCommentAnchor.path} ${selectedDiffCommentLabel}` : "No diff line selected"
 	})()
-	const activeCommentAnchorLabel = commentAnchorLabel
 	const mergeLayout = sizedModal(46, 68, 14, 20)
+>>>>>>> kitlangton/main
 	const mergeModalWidth = mergeLayout.width
 	const mergeModalHeight = mergeLayout.height
 	const mergeModalLeft = mergeLayout.left
@@ -4362,14 +5117,24 @@ export const App = () => {
 			<box paddingLeft={1} paddingRight={1} flexDirection="column" backgroundColor={colors.background}>
 				<PlainLine text={headerLine} fg={colors.muted} bold />
 			</box>
-			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive && !isInitialLoading ? (
+<<<<<<< HEAD
+			{isWideLayout && !detailFullView && !diffFullView && !isInitialLoading ? (
 				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" />
 			) : (
 				<Divider width={contentWidth} />
 			)}
 			{isInitialLoading ? (
 				<LoadingPane content={detailPlaceholderContent} width={contentWidth} height={wideBodyHeight} />
-			) : commentsViewActive && selectedPullRequest ? (
+||||||| dea1d03
+			{isWideLayout && !detailFullView && !diffFullView ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" /> : <Divider width={contentWidth} />}
+			{diffFullView ? (
+=======
+			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive ? (
+				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┬" />
+			) : (
+				<Divider width={contentWidth} />
+			)}
+			{commentsViewActive && selectedPullRequest ? (
 				<CommentsPane
 					pullRequest={selectedPullRequest}
 					comments={selectedComments}
@@ -4381,6 +5146,7 @@ export const App = () => {
 					height={wideBodyHeight}
 					loadingIndicator={loadingIndicator}
 				/>
+>>>>>>> kitlangton/main
 			) : diffFullView ? (
 				<PullRequestDiffPane
 					pullRequest={selectedPullRequest}
@@ -4409,13 +5175,66 @@ export const App = () => {
 			) : detailFullView && activeSurface === "pullRequests" && isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 				<box flexGrow={1} flexDirection="column">
 					<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} showChecks={isWideLayout} />
+<<<<<<< HEAD
 					<LoadingPane content={detailLoadingContent} width={contentWidth} height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))} />
+||||||| dea1d03
+					<LoadingPane
+						content={detailLoadingContent}
+						width={contentWidth}
+						height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))}
+					/>
+=======
+					<Filler rows={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, contentWidth, isWideLayout))} prefix="detail-loading-full" />
+>>>>>>> kitlangton/main
 				</box>
 			) : isWideLayout && detailFullView && activeSurface === "issues" ? (
 				<box flexGrow={1} flexDirection="column">
+<<<<<<< HEAD
 					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: wideFullscreenIssueDetailScrollable }}>
 						<IssueDetailsPane
 							issue={selectedIssue}
+||||||| dea1d03
+					{selectedPullRequest ? (
+						<>
+							<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} showChecks />
+							<scrollbox ref={detailScrollRef} focusable={false} flexGrow={1} verticalScrollbarOptions={{ visible: fullscreenDetailBodyScrollable }}>
+								<DetailBody
+									pullRequest={selectedPullRequest}
+									contentWidth={fullscreenContentWidth}
+									bodyLines={fullscreenBodyLines}
+									bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+									conversationItems={selectedConversationItems}
+									conversationStatus={selectedConversationStatus}
+									loadingIndicator={loadingIndicator}
+									themeId={themeId}
+								/>
+							</scrollbox>
+						</>
+					) : (
+						<DetailsPane
+							pullRequest={null}
+=======
+					{selectedPullRequest ? (
+						<>
+							<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} showChecks />
+							<scrollbox ref={detailScrollRef} focusable={false} flexGrow={1} verticalScrollbarOptions={{ visible: fullscreenDetailBodyScrollable }}>
+								<DetailBody
+									pullRequest={selectedPullRequest}
+									contentWidth={fullscreenContentWidth}
+									bodyLines={fullscreenBodyLines}
+									bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+									comments={selectedComments}
+									commentsStatus={selectedCommentsStatus}
+									loadingIndicator={loadingIndicator}
+									themeId={themeId}
+									onLinkOpen={openLinkInBrowser}
+								/>
+							</scrollbox>
+						</>
+					) : (
+						<DetailsPane
+							pullRequest={null}
+>>>>>>> kitlangton/main
 							viewerUsername={username}
 							contentWidth={fullscreenContentWidth}
 							bodyLines={fullscreenBodyLines}
@@ -4424,6 +5243,7 @@ export const App = () => {
 							placeholderContent={detailPlaceholderContent}
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
+							onLinkOpen={openLinkInBrowser}
 						/>
 					</scrollbox>
 				</box>
@@ -4455,14 +5275,15 @@ export const App = () => {
 							placeholderContent={detailPlaceholderContent}
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
-							comments={selectedComments}
-							commentsStatus={selectedCommentsStatus}
+							conversationItems={selectedConversationItems}
+							conversationStatus={selectedConversationStatus}
 						/>
 					</scrollbox>
 				</box>
 			) : isWideLayout ? (
 				<box key="wide-main" flexGrow={1} flexDirection="row">
 					<box width={leftPaneWidth} height={wideBodyHeight} flexDirection="column">
+<<<<<<< HEAD
 						<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
 							<box paddingLeft={sectionPadding} paddingRight={0}>
 								{activeSurface === "issues" ? (
@@ -4472,8 +5293,21 @@ export const App = () => {
 								) : (
 									<PullRequestList key={`wide-pulls-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
 								)}
+||||||| dea1d03
+						<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
+							<box paddingLeft={sectionPadding} paddingRight={0}>
+								<PullRequestList key={`wide-${leftContentWidth}`} {...prListProps} contentWidth={leftContentWidth} />
+=======
+						{widePullRequestListNeedsScroll ? (
+							<scrollbox ref={prListScrollRef} focusable={false} height={wideBodyHeight} flexGrow={0}>
+								{widePullRequestList}
+							</scrollbox>
+						) : (
+							<box height={wideBodyHeight} flexDirection="column">
+								{widePullRequestList}
+>>>>>>> kitlangton/main
 							</box>
-						</scrollbox>
+						)}
 					</box>
 					<SeparatorColumn height={wideBodyHeight} junctionRows={activeSurface === "issues" ? issueDetailJunctions : isAuxiliarySurface(activeSurface) ? auxiliaryDetailJunctions : detailJunctions} />
 					<box width={rightPaneWidth} height={wideBodyHeight} flexDirection="column">
@@ -4503,13 +5337,52 @@ export const App = () => {
 						) : isSelectedPullRequestDetailLoading && selectedPullRequest ? (
 							<>
 								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
+<<<<<<< HEAD
 								<LoadingPane content={detailLoadingContent} width={rightPaneWidth} height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))} />
+||||||| dea1d03
+								<LoadingPane
+									content={detailLoadingContent}
+									width={rightPaneWidth}
+									height={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))}
+								/>
+=======
+								<Filler rows={Math.max(1, wideBodyHeight - getDetailHeaderHeight(selectedPullRequest, rightPaneWidth, true))} prefix="detail-loading-preview" />
+>>>>>>> kitlangton/main
 							</>
 						) : selectedPullRequest ? (
 							<>
+<<<<<<< HEAD
 								<DetailHeader key={`pull-header-${selectedPullRequest.url}`} pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
 								<scrollbox key={`pull-body-${selectedPullRequest.url}`} ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>
-									<DetailBody pullRequest={selectedPullRequest} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} comments={selectedComments} commentsStatus={selectedCommentsStatus} onLinkOpen={openLinkInBrowser} />
+									<DetailBody pullRequest={selectedPullRequest} contentWidth={rightContentWidth} bodyLines={wideDetailLines} bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT} loadingIndicator={loadingIndicator} themeId={themeId} conversationItems={selectedConversationItems} conversationStatus={selectedConversationStatus} />
+||||||| dea1d03
+								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
+								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>
+									<DetailBody
+										pullRequest={selectedPullRequest}
+										contentWidth={rightContentWidth}
+										bodyLines={wideDetailLines}
+										bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+										conversationItems={selectedConversationItems}
+										conversationStatus={selectedConversationStatus}
+										loadingIndicator={loadingIndicator}
+										themeId={themeId}
+									/>
+=======
+								<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={rightContentWidth} paneWidth={rightPaneWidth} showChecks />
+								<scrollbox ref={detailPreviewScrollRef} flexGrow={1} verticalScrollbarOptions={{ visible: wideDetailBodyScrollable }}>
+									<DetailBody
+										pullRequest={selectedPullRequest}
+										contentWidth={rightContentWidth}
+										bodyLines={wideDetailLines}
+										bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+										comments={selectedComments}
+										commentsStatus={selectedCommentsStatus}
+										loadingIndicator={loadingIndicator}
+										themeId={themeId}
+										onLinkOpen={openLinkInBrowser}
+									/>
+>>>>>>> kitlangton/main
 								</scrollbox>
 							</>
 						) : (
@@ -4519,9 +5392,52 @@ export const App = () => {
 				</box>
 			) : detailFullView && activeSurface === "issues" ? (
 				<box flexGrow={1} flexDirection="column">
+<<<<<<< HEAD
 					<scrollbox ref={detailScrollRef} focused flexGrow={1} verticalScrollbarOptions={{ visible: narrowFullscreenIssueDetailScrollable }}>
 						<IssueDetailsPane
 							issue={selectedIssue}
+||||||| dea1d03
+					{selectedPullRequest ? (
+						<>
+							<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} />
+							<scrollbox ref={detailScrollRef} focusable={false} flexGrow={1} verticalScrollbarOptions={{ visible: fullscreenDetailBodyScrollable }}>
+								<DetailBody
+									pullRequest={selectedPullRequest}
+									contentWidth={fullscreenContentWidth}
+									bodyLines={fullscreenBodyLines}
+									bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+									conversationItems={selectedConversationItems}
+									conversationStatus={selectedConversationStatus}
+									loadingIndicator={loadingIndicator}
+									themeId={themeId}
+								/>
+							</scrollbox>
+						</>
+					) : (
+						<DetailsPane
+							pullRequest={null}
+=======
+					{selectedPullRequest ? (
+						<>
+							<DetailHeader pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} />
+							<scrollbox ref={detailScrollRef} focusable={false} flexGrow={1} verticalScrollbarOptions={{ visible: fullscreenDetailBodyScrollable }}>
+								<DetailBody
+									pullRequest={selectedPullRequest}
+									contentWidth={fullscreenContentWidth}
+									bodyLines={fullscreenBodyLines}
+									bodyLineLimit={DETAIL_BODY_SCROLL_LIMIT}
+									comments={selectedComments}
+									commentsStatus={selectedCommentsStatus}
+									loadingIndicator={loadingIndicator}
+									themeId={themeId}
+									onLinkOpen={openLinkInBrowser}
+								/>
+							</scrollbox>
+						</>
+					) : (
+						<DetailsPane
+							pullRequest={null}
+>>>>>>> kitlangton/main
 							viewerUsername={username}
 							contentWidth={fullscreenContentWidth}
 							bodyLines={fullscreenBodyLines}
@@ -4530,6 +5446,7 @@ export const App = () => {
 							placeholderContent={detailPlaceholderContent}
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
+							onLinkOpen={openLinkInBrowser}
 						/>
 					</scrollbox>
 				</box>
@@ -4560,22 +5477,50 @@ export const App = () => {
 							placeholderContent={detailPlaceholderContent}
 							loadingIndicator={loadingIndicator}
 							themeId={themeId}
-							comments={selectedComments}
-							commentsStatus={selectedCommentsStatus}
+							conversationItems={selectedConversationItems}
+							conversationStatus={selectedConversationStatus}
 						/>
 					</scrollbox>
 				</box>
 			) : (
 				<box key="narrow-main" height={wideBodyHeight} flexDirection="column">
+<<<<<<< HEAD
 					{activeSurface === "issues" ? (
 						<IssueDetailsPane issue={selectedIssue} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} />
 					) : isAuxiliarySurface(activeSurface) ? (
 						<AuxiliaryDetailsPane item={selectedAuxiliaryItem} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} themeId={themeId} />
 					) : (
-						<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} comments={selectedComments} commentsStatus={selectedCommentsStatus} onLinkOpen={openLinkInBrowser} />
+						<DetailsPane pullRequest={selectedPullRequest} viewerUsername={username} contentWidth={fullscreenContentWidth} paneWidth={contentWidth} placeholderContent={detailPlaceholderContent} loadingIndicator={loadingIndicator} themeId={themeId} conversationItems={selectedConversationItems} conversationStatus={selectedConversationStatus} />
 					)}
+||||||| dea1d03
+					<DetailsPane
+						pullRequest={selectedPullRequest}
+						viewerUsername={username}
+						contentWidth={fullscreenContentWidth}
+						paneWidth={contentWidth}
+						conversationItems={selectedConversationItems}
+						conversationStatus={selectedConversationStatus}
+						placeholderContent={detailPlaceholderContent}
+						loadingIndicator={loadingIndicator}
+						themeId={themeId}
+					/>
+=======
+					<DetailsPane
+						pullRequest={selectedPullRequest}
+						viewerUsername={username}
+						contentWidth={fullscreenContentWidth}
+						paneWidth={contentWidth}
+						comments={selectedComments}
+						commentsStatus={selectedCommentsStatus}
+						placeholderContent={detailPlaceholderContent}
+						loadingIndicator={loadingIndicator}
+						themeId={themeId}
+						onLinkOpen={openLinkInBrowser}
+					/>
+>>>>>>> kitlangton/main
 					<Divider width={contentWidth} />
 					<box flexGrow={1} flexDirection="column">
+<<<<<<< HEAD
 						<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
 							<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
 								{activeSurface === "issues" ? (
@@ -4585,18 +5530,43 @@ export const App = () => {
 								) : (
 									<PullRequestList key={`narrow-pulls-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
 								)}
+||||||| dea1d03
+						<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
+							<box paddingLeft={sectionPadding} paddingRight={sectionPadding}>
+								<PullRequestList key={`narrow-${fullscreenContentWidth}`} {...prListProps} contentWidth={fullscreenContentWidth} />
+=======
+						{narrowPullRequestListNeedsScroll ? (
+							<scrollbox ref={prListScrollRef} focusable={false} flexGrow={1}>
+								{narrowPullRequestList}
+							</scrollbox>
+						) : (
+							<box flexGrow={1} flexDirection="column">
+								{narrowPullRequestList}
+>>>>>>> kitlangton/main
 							</box>
-						</scrollbox>
+						)}
 					</box>
 				</box>
 			)}
 
-			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive && !isInitialLoading ? (
+<<<<<<< HEAD
+			{isWideLayout && !detailFullView && !diffFullView && !isInitialLoading ? (
 				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" />
 			) : (
 				<Divider width={contentWidth} />
 			)}
 			<box width={contentWidth} height={1} paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
+||||||| dea1d03
+			{isWideLayout && !detailFullView && !diffFullView ? <Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" /> : <Divider width={contentWidth} />}
+			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
+=======
+			{isWideLayout && !detailFullView && !diffFullView && !commentsViewActive ? (
+				<Divider width={contentWidth} junctionAt={dividerJunctionAt} junctionChar="┴" />
+			) : (
+				<Divider width={contentWidth} />
+			)}
+			<box paddingLeft={1} paddingRight={1} backgroundColor={colors.background}>
+>>>>>>> kitlangton/main
 				{footerNotice ? (
 					<PlainLine text={footerNotice} fg={colors.count} />
 				) : (
@@ -4607,6 +5577,7 @@ export const App = () => {
 						showFilterClear={filterMode || filterQuery.length > 0}
 						detailFullView={detailFullView}
 						diffFullView={diffFullView}
+<<<<<<< HEAD
 						diffCommentMode={diffCommentMode}
 						hasSelection={activeSurface === "issues" ? selectedIssue !== null : activeSurface === "pullRequests" ? selectedPullRequest !== null : selectedAuxiliaryItem !== null}
 						canCloseSelection={activeSurface === "issues" ? selectedIssue?.state === "open" : activeSurface === "pullRequests" ? selectedPullRequest?.state === "open" : false}
@@ -4615,7 +5586,28 @@ export const App = () => {
 						canManageSelection={Boolean(selectedAuxiliaryItem?.action)}
 						manageLabel={auxiliaryActionSpec(selectedAuxiliaryItem)?.footerLabel ?? null}
 						hasError={activeStatus === "error"}
-						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : activeSurface === "pullRequests" ? isRefreshingPullRequests || isHydratingPullRequestDetails : isRefreshingAuxiliary) || closeModal.running || confirmActionModal.running || pullRequestStateModal.running || mergeModal.running || submitReviewModal.running}
+						isLoading={activeStatus === "loading" || (activeSurface === "issues" ? isRefreshingIssues || isHydratingIssueDetails : activeSurface === "pullRequests" ? isRefreshingPullRequests || isHydratingPullRequestDetails : isRefreshingAuxiliary) || closeModal.running || confirmActionModal.running || mergeModal.running || submitReviewModal.running}
+||||||| dea1d03
+						diffRangeActive={diffCommentRangeActive}
+						hasSelection={selectedPullRequest !== null}
+						hasError={pullRequestStatus === "error"}
+						isLoading={
+							pullRequestStatus === "loading" || isRefreshingPullRequests || isHydratingPullRequestDetails || closeModal.running || mergeModal.running || submitReviewModal.running
+						}
+=======
+						diffRangeActive={diffCommentRangeActive}
+						hasSelection={selectedPullRequest !== null}
+						hasError={pullRequestStatus === "error"}
+						isLoading={
+							pullRequestStatus === "loading" ||
+							isRefreshingPullRequests ||
+							isHydratingPullRequestDetails ||
+							closeModal.running ||
+							pullRequestStateModal.running ||
+							mergeModal.running ||
+							submitReviewModal.running
+						}
+>>>>>>> kitlangton/main
 						loadingIndicator={loadingIndicator}
 						retryProgress={retryProgress}
 					/>
@@ -4642,6 +5634,7 @@ export const App = () => {
 					loadingIndicator={loadingIndicator}
 				/>
 			) : null}
+<<<<<<< HEAD
 			{confirmActionModalActive ? (
 				<ConfirmActionModal
 					state={confirmActionModal}
@@ -4649,9 +5642,8 @@ export const App = () => {
 					modalHeight={confirmActionModalHeight}
 					offsetLeft={confirmActionModalLeft}
 					offsetTop={confirmActionModalTop}
-					loadingIndicator={loadingIndicator}
-				/>
-			) : null}
+||||||| dea1d03
+=======
 			{pullRequestStateModalActive ? (
 				<PullRequestStateModal
 					state={pullRequestStateModal}
@@ -4659,6 +5651,7 @@ export const App = () => {
 					modalHeight={pullRequestStateModalHeight}
 					offsetLeft={pullRequestStateModalLeft}
 					offsetTop={pullRequestStateModalTop}
+>>>>>>> kitlangton/main
 					loadingIndicator={loadingIndicator}
 				/>
 			) : null}

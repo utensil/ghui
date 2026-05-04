@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { PullRequestItem, ReviewStatus } from "../src/domain.js"
 import { colors } from "../src/ui/colors.js"
-import { pullRequestRowDisplay, reviewIcon, reviewLabel } from "../src/ui/pullRequests.js"
+import { failingCheckNames, pullRequestMetadataText, pullRequestRowDisplay, reviewIcon, reviewLabel } from "../src/ui/pullRequests.js"
 
 const open: PullRequestItem = {
 	repository: "owner/repo",
@@ -99,5 +99,44 @@ describe("reviewLabel", () => {
 		["none", null],
 	])("review status %s → %s", (status, label) => {
 		expect(reviewLabel({ ...open, reviewStatus: status })).toBe(label)
+	})
+})
+
+describe("pullRequestMetadataText", () => {
+	test("includes named failing checks when copying metadata", () => {
+		const metadata = pullRequestMetadataText({
+			...open,
+			checkStatus: "failing",
+			checkSummary: "checks 2/4",
+			checks: [
+				{ name: "lint", status: "completed", conclusion: "success" },
+				{ name: "test", status: "completed", conclusion: "failure" },
+				{ name: "build", status: "completed", conclusion: "timed_out" },
+				{ name: "docs", status: "completed", conclusion: "skipped" },
+			],
+		})
+
+		expect(metadata).toContain("checks 2/4")
+		expect(metadata).toContain("failing checks: test, build")
+	})
+
+	test("omits failing check line when checks are passing", () => {
+		expect(pullRequestMetadataText(open)).not.toContain("failing checks:")
+	})
+})
+
+describe("failingCheckNames", () => {
+	test("treats failure, cancelled, and timed out conclusions as failing", () => {
+		expect(
+			failingCheckNames({
+				...open,
+				checks: [
+					{ name: "fail", status: "completed", conclusion: "failure" },
+					{ name: "cancelled", status: "completed", conclusion: "cancelled" },
+					{ name: "timeout", status: "completed", conclusion: "timed_out" },
+					{ name: "pending", status: "in_progress", conclusion: null },
+				],
+			}),
+		).toEqual(["fail", "cancelled", "timeout"])
 	})
 })

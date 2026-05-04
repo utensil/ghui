@@ -1,5 +1,6 @@
 import { Effect, Layer } from "effect"
-import type { AuxiliaryItem, AuxiliarySurface, CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestConversationItem, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
+import type { AuxiliaryItem, AuxiliarySurface, CheckItem, CreatePullRequestCommentInput, IssueComment, IssueItem, IssuePage, IssueQueueMode, Mergeable, PullRequestComment, PullRequestItem, PullRequestLabel, PullRequestMergeInfo, PullRequestPage, PullRequestQueueMode, PullRequestReviewComment, ReviewStatus } from "../domain.js"
+import { mergeInfoFromPullRequest } from "../mergeActions.js"
 import { GitHubService } from "./GitHubService.js"
 
 export interface MockOptions {
@@ -226,7 +227,7 @@ export const MockGitHubService = {
 		} satisfies PullRequestItem))
 		const findPullRequest = (repository: string, number: number) => items.find((item) => item.repository === repository && item.number === number) ?? items[0]!
 		const findIssue = (repository: string, number: number) => issues.find((item) => item.repository === repository && item.number === number) ?? issues[0]!
-		const conversationItems = (repository: string, number: number): readonly PullRequestConversationItem[] => [
+		const comments = (repository: string, number: number): readonly PullRequestComment[] => [
 			{
 				_tag: "comment",
 				id: `mock-comment:${repository}:${number}:1`,
@@ -239,14 +240,45 @@ export const MockGitHubService = {
 				_tag: "review-comment",
 				id: `mock-review:${repository}:${number}:1`,
 				author: "mock-reviewer",
-				body: "Inline review comment rendered in the same conversation stream.",
+				body: "Inline review comment rendered in the same comments stream.",
 				createdAt: new Date(Date.now() - 1_800_000),
 				url: null,
 				path: "src/App.tsx",
 				line: 42,
 				side: "RIGHT",
+				inReplyTo: null,
+			},
+			{
+				_tag: "review-comment",
+				id: `mock-review:${repository}:${number}:2`,
+				author: "another-reviewer",
+				body: "Threaded reply on the same line — should render indented.",
+				createdAt: new Date(Date.now() - 1_200_000),
+				url: null,
+				path: "src/App.tsx",
+				line: 42,
+				side: "RIGHT",
+				inReplyTo: `mock-review:${repository}:${number}:1`,
 			},
 		]
+		const reviewComments = (repository: string, number: number): readonly PullRequestReviewComment[] =>
+			comments(repository, number).flatMap((comment) =>
+				comment._tag === "review-comment"
+					? [
+							{
+								id: comment.id,
+								path: comment.path,
+								line: comment.line,
+								side: comment.side,
+								author: comment.author,
+								body: comment.body,
+								createdAt: comment.createdAt,
+								url: comment.url,
+								inReplyTo: comment.inReplyTo,
+							},
+						]
+					: [],
+			)
 
 		return Layer.succeed(
 			GitHubService,
@@ -288,32 +320,57 @@ export const MockGitHubService = {
 				listPullRequestCommits: () => Effect.succeed([]),
 				getCommitDiff: () => Effect.succeed(""),
 				getPullRequestDiff: (_repo, _number) => Effect.succeed(mockDiff),
-				listPullRequestComments: (_repo, _number) => Effect.succeed([] as readonly PullRequestReviewComment[]),
-				listPullRequestConversation: (repository, number) => Effect.succeed(conversationItems(repository, number)),
-				getPullRequestMergeInfo: (repository, number) => Effect.succeed({
-					repository,
-					number,
-					title: `Mock PR ${number}`,
-					state: "open",
-					isDraft: false,
-					mergeable: MERGEABLE_CYCLE[number % MERGEABLE_CYCLE.length]!,
-					reviewStatus: "approved",
-					checkStatus: "passing",
-					checkSummary: "10/10",
-					autoMergeEnabled: false,
-				} satisfies PullRequestMergeInfo),
+				listPullRequestReviewComments: (repository, number) => Effect.succeed(reviewComments(repository, number)),
+				listPullRequestComments: (repository, number) => Effect.succeed(comments(repository, number)),
+				getPullRequestMergeInfo: (repository, number) => {
+					const pr = findPullRequest(repository, number)
+					return Effect.succeed({
+						...mergeInfoFromPullRequest(pr),
+						repository,
+						number,
+						mergeable: MERGEABLE_CYCLE[number % MERGEABLE_CYCLE.length]!,
+						reviewStatus: pr.reviewStatus === "draft" ? "approved" : pr.reviewStatus,
+						checkStatus: "passing",
+						checkSummary: "10/10",
+					} satisfies PullRequestMergeInfo)
+				},
+				getRepositoryMergeMethods: () => Effect.succeed({ squash: true, merge: true, rebase: true }),
 				mergePullRequest: () => Effect.void,
 				closePullRequest: () => Effect.void,
-				createPullRequestComment: (input: CreatePullRequestCommentInput) => Effect.succeed({
-					id: `mock:${Date.now()}`,
-					path: input.path,
-					line: input.line,
-					side: input.side,
-					author: username,
-					body: input.body,
-					createdAt: new Date(),
-					url: null,
-				} satisfies PullRequestReviewComment),
+				createPullRequestComment: (input: CreatePullRequestCommentInput) =>
+					Effect.succeed({
+						id: `mock:${Date.now()}`,
+						path: input.path,
+						line: input.line,
+						side: input.side,
+						author: username,
+						body: input.body,
+						createdAt: new Date(),
+						url: null,
+						inReplyTo: null,
+					} satisfies PullRequestReviewComment),
+				createPullRequestIssueComment: (_repo, _number, body) =>
+					Effect.succeed({
+						_tag: "comment" as const,
+						id: `mock-issue:${Date.now()}`,
+						author: username,
+						body,
+						createdAt: new Date(),
+						url: null,
+					}),
+				replyToReviewComment: (_repo, _number, inReplyTo, body) =>
+					Effect.succeed({
+						_tag: "review-comment" as const,
+						id: `mock-reply:${inReplyTo}:${Date.now()}`,
+						path: "src/App.tsx",
+						line: 42,
+						side: "RIGHT" as const,
+						author: username,
+						body,
+						createdAt: new Date(),
+						url: null,
+						inReplyTo,
+					}),
 				submitPullRequestReview: () => Effect.void,
 				toggleDraftStatus: () => Effect.void,
 				listRepoLabels: () => Effect.succeed([]),

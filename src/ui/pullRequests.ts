@@ -1,4 +1,4 @@
-import type { PullRequestItem, PullRequestLabel, ReviewStatus } from "../domain.js"
+import type { CheckConclusion, PullRequestItem, PullRequestLabel, ReviewStatus } from "../domain.js"
 import { colors } from "./colors.js"
 
 export const shortRepoName = (repository: string) => repository.split("/")[1] ?? repository
@@ -16,6 +16,21 @@ const REVIEW_LABEL: Partial<Record<ReviewStatus, string>> = {
 export const reviewLabel = (pullRequest: PullRequestItem) => REVIEW_LABEL[pullRequest.reviewStatus] ?? null
 
 export const checkLabel = (pullRequest: PullRequestItem) => pullRequest.checkSummary
+
+const passingCheckConclusions = new Set<CheckConclusion>(["success", "neutral", "skipped"])
+
+export const failingCheckNames = (pullRequest: PullRequestItem) =>
+	pullRequest.checks.flatMap((check) => (check.conclusion && !passingCheckConclusions.has(check.conclusion) ? [check.name] : []))
+
+export const pullRequestMetadataText = (pullRequest: PullRequestItem) => {
+	const lines = [pullRequest.title, `${pullRequest.repository} #${pullRequest.number}`, pullRequest.url]
+	const review = reviewLabel(pullRequest)
+	if (review) lines.push(`review: ${review}`)
+	if (pullRequest.checkSummary) lines.push(pullRequest.checkSummary)
+	const failed = failingCheckNames(pullRequest)
+	if (failed.length > 0) lines.push(`failing checks: ${failed.join(", ")}`)
+	return lines.join("\n")
+}
 
 export const statusColor = (status: PullRequestItem["reviewStatus"] | PullRequestItem["checkStatus"]) => colors.status[status]
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import type { PullRequestMergeInfo } from "../src/domain.js"
-import { availableMergeActions, mergeActions } from "../src/mergeActions.js"
+import type { PullRequestMergeAction, PullRequestMergeInfo } from "../src/domain.js"
+import { availableMergeKinds, mergeActionCliArgs, mergeKinds, visibleMergeKinds } from "../src/mergeActions.js"
 
 const cleanInfo: PullRequestMergeInfo = {
 	repository: "owner/repo",
@@ -13,16 +13,17 @@ const cleanInfo: PullRequestMergeInfo = {
 	checkStatus: "passing",
 	checkSummary: "checks 5/5",
 	autoMergeEnabled: false,
+	viewerCanMergeAsAdmin: false,
 }
 
-describe("mergeActions ordering", () => {
-	test("source-of-truth order is squash, auto, disable-auto, admin", () => {
-		expect(mergeActions.map((action) => action.action)).toEqual(["squash", "auto", "disable-auto", "admin"])
+describe("mergeKinds ordering", () => {
+	test("source-of-truth order is now, auto, disable-auto, admin", () => {
+		expect(mergeKinds.map((kind) => kind.kind)).toEqual(["now", "auto", "disable-auto", "admin"])
 	})
 
-	test("source-of-truth optimistic UI effects match action behavior", () => {
-		expect(Object.fromEntries(mergeActions.map((action) => [action.action, action.optimisticState ?? action.optimisticAutoMergeEnabled ?? null]))).toEqual({
-			squash: "merged",
+	test("source-of-truth optimistic UI effects match kind behavior", () => {
+		expect(Object.fromEntries(mergeKinds.map((kind) => [kind.kind, kind.optimisticState ?? kind.optimisticAutoMergeEnabled ?? null]))).toEqual({
+			now: "merged",
 			auto: true,
 			"disable-auto": false,
 			admin: "merged",
@@ -30,40 +31,101 @@ describe("mergeActions ordering", () => {
 	})
 })
 
-describe("availableMergeActions", () => {
+describe("availableMergeKinds", () => {
 	test("returns empty when info is null", () => {
-		expect(availableMergeActions(null)).toEqual([])
+		expect(availableMergeKinds(null)).toEqual([])
 	})
 
-	test("clean PR offers squash, auto, admin (not disable-auto)", () => {
-		expect(availableMergeActions(cleanInfo).map((a) => a.action)).toEqual(["squash", "auto", "admin"])
+	test("clean PR offers now and auto, not admin or disable-auto", () => {
+		expect(availableMergeKinds(cleanInfo).map((k) => k.kind)).toEqual(["now", "auto"])
 	})
 
-	test("auto-merge enabled offers squash, disable-auto, admin (not auto)", () => {
-		expect(availableMergeActions({ ...cleanInfo, autoMergeEnabled: true }).map((a) => a.action)).toEqual(["squash", "disable-auto", "admin"])
+	test("clean PR offers admin only when viewer can merge as admin", () => {
+		expect(availableMergeKinds({ ...cleanInfo, viewerCanMergeAsAdmin: true }).map((k) => k.kind)).toEqual(["now", "auto", "admin"])
+	})
+
+	test("auto-merge enabled offers now and disable-auto, not auto", () => {
+		expect(availableMergeKinds({ ...cleanInfo, autoMergeEnabled: true }).map((k) => k.kind)).toEqual(["now", "disable-auto"])
 	})
 
 	test("conflicting branch offers nothing", () => {
-		expect(availableMergeActions({ ...cleanInfo, mergeable: "conflicting" }).map((a) => a.action)).toEqual([])
+		expect(availableMergeKinds({ ...cleanInfo, mergeable: "conflicting" }).map((k) => k.kind)).toEqual([])
 	})
 
 	test("draft offers nothing", () => {
-		expect(availableMergeActions({ ...cleanInfo, isDraft: true }).map((a) => a.action)).toEqual([])
+		expect(availableMergeKinds({ ...cleanInfo, isDraft: true }).map((k) => k.kind)).toEqual([])
 	})
 
-	test("changes-requested hides squash but admin still works", () => {
-		expect(availableMergeActions({ ...cleanInfo, reviewStatus: "changes" }).map((a) => a.action)).toEqual(["auto", "admin"])
+	test("changes-requested hides now but auto still works", () => {
+		expect(availableMergeKinds({ ...cleanInfo, reviewStatus: "changes" }).map((k) => k.kind)).toEqual(["auto"])
 	})
 
-	test("pending checks hide squash but admin still works", () => {
-		expect(availableMergeActions({ ...cleanInfo, checkStatus: "pending" }).map((a) => a.action)).toEqual(["auto", "admin"])
+	test("pending checks hide now but auto still works", () => {
+		expect(availableMergeKinds({ ...cleanInfo, checkStatus: "pending" }).map((k) => k.kind)).toEqual(["auto"])
 	})
 
-	test("failing checks hide squash but admin still works", () => {
-		expect(availableMergeActions({ ...cleanInfo, checkStatus: "failing" }).map((a) => a.action)).toEqual(["auto", "admin"])
+	test("failing checks hide now but auto still works", () => {
+		expect(availableMergeKinds({ ...cleanInfo, checkStatus: "failing" }).map((k) => k.kind)).toEqual(["auto"])
+	})
+
+	test("admin can bypass changes and checks", () => {
+		expect(availableMergeKinds({ ...cleanInfo, viewerCanMergeAsAdmin: true, reviewStatus: "changes" }).map((k) => k.kind)).toEqual(["auto", "admin"])
+		expect(availableMergeKinds({ ...cleanInfo, viewerCanMergeAsAdmin: true, checkStatus: "pending" }).map((k) => k.kind)).toEqual(["auto", "admin"])
 	})
 
 	test("closed PR offers nothing", () => {
-		expect(availableMergeActions({ ...cleanInfo, state: "closed" }).map((a) => a.action)).toEqual([])
+		expect(availableMergeKinds({ ...cleanInfo, state: "closed" }).map((k) => k.kind)).toEqual([])
+	})
+})
+
+describe("visibleMergeKinds", () => {
+	const allMethods = { squash: true, merge: true, rebase: true }
+
+	test("returns no actions until repository merge methods load", () => {
+		expect(visibleMergeKinds(cleanInfo, null, "squash")).toEqual([])
+	})
+
+	test("returns no actions when info is null", () => {
+		expect(visibleMergeKinds(null, allMethods, "squash")).toEqual([])
+	})
+
+	test("hides method-specific actions when the selected method is not allowed", () => {
+		expect(visibleMergeKinds({ ...cleanInfo, autoMergeEnabled: true }, { squash: false, merge: true, rebase: false }, "squash").map((kind) => kind.kind)).toEqual(["disable-auto"])
+	})
+
+	test("draft PR offers the same kinds as a ready PR (mark-ready handled at action time)", () => {
+		expect(visibleMergeKinds({ ...cleanInfo, isDraft: true }, allMethods, "squash").map((kind) => kind.kind)).toEqual(["now", "auto"])
+	})
+
+	test("draft PR with auto-merge already on still shows disable-auto and now", () => {
+		expect(visibleMergeKinds({ ...cleanInfo, isDraft: true, autoMergeEnabled: true }, allMethods, "squash").map((kind) => kind.kind)).toEqual(["now", "disable-auto"])
+	})
+})
+
+describe("mergeActionCliArgs", () => {
+	const action = (a: PullRequestMergeAction) => mergeActionCliArgs(a)
+
+	test("squash + now uses --squash --delete-branch", () => {
+		expect(action({ kind: "now", method: "squash" })).toEqual(["--squash", "--delete-branch"])
+	})
+
+	test("merge + now uses --merge --delete-branch", () => {
+		expect(action({ kind: "now", method: "merge" })).toEqual(["--merge", "--delete-branch"])
+	})
+
+	test("rebase + now uses --rebase --delete-branch", () => {
+		expect(action({ kind: "now", method: "rebase" })).toEqual(["--rebase", "--delete-branch"])
+	})
+
+	test("auto + rebase uses --rebase --auto --delete-branch", () => {
+		expect(action({ kind: "auto", method: "rebase" })).toEqual(["--rebase", "--auto", "--delete-branch"])
+	})
+
+	test("admin + merge uses --merge --admin --delete-branch", () => {
+		expect(action({ kind: "admin", method: "merge" })).toEqual(["--merge", "--admin", "--delete-branch"])
+	})
+
+	test("disable-auto ignores method and uses --disable-auto", () => {
+		expect(action({ kind: "disable-auto" })).toEqual(["--disable-auto"])
 	})
 })

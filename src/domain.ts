@@ -61,7 +61,8 @@ export const pullRequestQueueSearchQualifier = (mode: PullRequestQueueMode, repo
 		assigned: "assignee:@me",
 		mentioned: "mentions:@me",
 	} as const satisfies Record<PullRequestQueueMode, string>
-	return qualifiers[mode]
+	const qualifier = qualifiers[mode]
+	return mode === "repository" && repository ? qualifier : `${qualifier} archived:false`
 }
 
 export const issueQueueLabels = {
@@ -117,7 +118,29 @@ export interface AuxiliaryItem {
 export const DiffCommentSide = Schema.Literals(["LEFT", "RIGHT"])
 export type DiffCommentSide = Schema.Schema.Type<typeof DiffCommentSide>
 
-export type PullRequestMergeAction = "squash" | "auto" | "admin" | "disable-auto"
+export const pullRequestMergeMethods = ["squash", "merge", "rebase"] as const
+export type PullRequestMergeMethod = (typeof pullRequestMergeMethods)[number]
+
+export const pullRequestMergeKinds = ["now", "auto", "admin", "disable-auto"] as const
+export type PullRequestMergeKind = (typeof pullRequestMergeKinds)[number]
+export type PullRequestMergeMethodKind = Exclude<PullRequestMergeKind, "disable-auto">
+
+export type PullRequestMergeAction =
+	| {
+			readonly kind: PullRequestMergeMethodKind
+			readonly method: PullRequestMergeMethod
+	  }
+	| {
+			readonly kind: "disable-auto"
+	  }
+
+export interface RepositoryMergeMethods {
+	readonly squash: boolean
+	readonly merge: boolean
+	readonly rebase: boolean
+}
+
+export const allowedMergeMethodList = (allowed: RepositoryMergeMethods): readonly PullRequestMergeMethod[] => pullRequestMergeMethods.filter((method) => allowed[method])
 
 export const pullRequestReviewEvents = ["COMMENT", "APPROVE", "REQUEST_CHANGES"] as const
 export type PullRequestReviewEvent = (typeof pullRequestReviewEvents)[number]
@@ -161,9 +184,10 @@ export interface PullRequestReviewComment {
 	readonly body: string
 	readonly createdAt: Date | null
 	readonly url: string | null
+	readonly inReplyTo: string | null
 }
 
-export type PullRequestConversationItem =
+export type PullRequestComment =
 	| {
 			readonly _tag: "comment"
 			readonly id: string
@@ -173,6 +197,9 @@ export type PullRequestConversationItem =
 			readonly url: string | null
 	  }
 	| ({ readonly _tag: "review-comment" } & PullRequestReviewComment)
+
+export const isReviewComment = (comment: PullRequestComment): comment is PullRequestComment & { readonly _tag: "review-comment" } => comment._tag === "review-comment"
+export const isIssueComment = (comment: PullRequestComment): comment is PullRequestComment & { readonly _tag: "comment" } => comment._tag === "comment"
 
 export interface PullRequestItem {
 	readonly repository: string
@@ -270,4 +297,5 @@ export interface PullRequestMergeInfo {
 	readonly checkStatus: CheckRollupStatus
 	readonly checkSummary: string | null
 	readonly autoMergeEnabled: boolean
+	readonly viewerCanMergeAsAdmin: boolean
 }

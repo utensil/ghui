@@ -1,5 +1,62 @@
 # @kitlangton/ghui
 
+## 0.4.7
+
+### Patch Changes
+
+- Fix comments view refreshes and keep review comment replies synchronized across the comments pane and diff threads.
+
+## 0.4.6
+
+### Patch Changes
+
+- 3f66a3a: Detect and open links in PR bodies. Markdown `[label](url)` and bare URLs are highlighted, hover changes the cursor to a pointer, and clicking opens the link in the system browser. Single-pass tokenizer also handles `#NNN` references and inline code. New `link` color in every theme.
+
+## 0.4.5
+
+### Patch Changes
+
+- Support repository merge methods in the merge modal, including merge commits, rebase merges, auto-merge, admin merges, and draft mark-ready confirmation.
+
+## 0.4.4
+
+### Patch Changes
+
+- 98fc852: Treat terminal `enter` key events the same as `return` key events.
+- 5c5576d: Wrap keyboard selection at the ends of picker-style modals.
+- 8e357ee: Add Vague as a selectable color theme.
+
+## 0.4.3
+
+### Patch Changes
+
+- bbf93d7: Require an explicit modal confirmation before changing a pull request between draft and ready for review.
+- 7a2317c: Clarify Homebrew installation and release automation documentation.
+
+## 0.4.2
+
+### Patch Changes
+
+- 3b41b4e: Show the startup logo sooner, run spinners at a shared 12 FPS, and add a separate hover highlight for pull request rows.
+
+## 0.4.1
+
+### Patch Changes
+
+- Avoid leaking terminal color query escape responses when starting ghui.
+
+## 0.4.0
+
+### Minor Changes
+
+- 727eb3a: Add light theme variants behind a theme picker tab toggle, so dark and light themes preview separately.
+- b2dcde5: Ship npm installs through platform-specific standalone binary packages so npm users no longer need Bun installed.
+
+### Patch Changes
+
+- f724ea2: Add Homebrew installation support with standalone release binaries and tap update automation.
+- 0c09e21: Filter pull requests from archived repositories out of the default queues while keeping explicit repository views available.
+
 ## 0.3.3
 
 ### Patch Changes

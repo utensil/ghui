@@ -41,6 +41,10 @@ interface AppCommandActions {
 	readonly closeDetails: () => void
 	readonly openDiffView: () => void
 	readonly closeDiffView: () => void
+	readonly openCommentsView: () => void
+	readonly closeCommentsView: () => void
+	readonly openNewIssueCommentModal: () => void
+	readonly openReplyToSelectedComment: () => void
 	readonly reloadDiff: () => void
 	readonly toggleDiffRenderView: () => void
 	readonly toggleDiffWrapMode: () => void
@@ -52,7 +56,7 @@ interface AppCommandActions {
 	readonly moveDiffCommentThread: (delta: 1 | -1) => void
 	readonly openDiffCommentModal: () => void
 	readonly openSubmitReviewModal: (initialEvent?: PullRequestReviewEvent) => void
-	readonly togglePullRequestDraftStatus: () => void
+	readonly openPullRequestStateModal: () => void
 	readonly openLabelModal: () => void
 	readonly openMergeModal: () => void
 	readonly openCloseModal: () => void
@@ -94,6 +98,8 @@ interface BuildAppCommandsInput {
 	readonly selectedAuxiliaryItem: AuxiliaryItem | null
 	readonly detailFullView: boolean
 	readonly diffFullView: boolean
+	readonly commentsViewActive: boolean
+	readonly hasSelectedComment: boolean
 	readonly diffReady: boolean
 	readonly effectiveDiffRenderView: DiffView
 	readonly diffWrapMode: DiffWrapMode
@@ -132,6 +138,8 @@ export const buildAppCommands = ({
 	selectedAuxiliaryItem,
 	detailFullView,
 	diffFullView,
+	commentsViewActive,
+	hasSelectedComment,
 	diffReady,
 	effectiveDiffRenderView,
 	diffWrapMode,
@@ -161,6 +169,7 @@ export const buildAppCommands = ({
 	const selectedDiffLineReason = diffFullView && diffReady ? (selectedDiffCommentAnchorLabel ? null : "No diff line selected.") : diffOpenReadyReason
 	const diffThreadReason = diffFullView && diffReady ? (hasDiffCommentThreads ? null : "No diff comments loaded.") : diffOpenReadyReason
 	const changedFilesReason = diffFullView && diffReady ? (readyDiffFileCount > 0 ? null : "No changed files loaded.") : diffOpenReadyReason
+	const selectedCommentReason = selectedPullRequest ? (commentsViewActive ? (hasSelectedComment ? null : "No comment selected.") : "Open comments first.") : noPullRequestReason
 	const loadMoreDisabledReason = isLoadingMorePullRequests ? "Already loading more pull requests." : hasMorePullRequests ? null : "No more pull requests loaded by this view."
 	const loadMoreIssuesDisabledReason = isLoadingMoreIssues ? "Already loading more issues." : hasMoreIssues ? null : "No more issues loaded by this view."
 	const activeSurfaceLabel = surfaceLabels[activeSurface]
@@ -424,6 +433,32 @@ export const buildAppCommands = ({
 			keywords: ["files", "patch"],
 			run: actions.openDiffView,
 		}),
+		forSelected({
+			id: "comments.open",
+			title: "Open comments",
+			scope: "Comments",
+			shortcut: "c",
+			keywords: ["conversation", "discussion", "review"],
+			run: actions.openCommentsView,
+		}),
+		forSelected({
+			id: "comments.new",
+			title: "New comment",
+			scope: "Comments",
+			shortcut: "a",
+			keywords: ["add", "post", "issue comment"],
+			run: actions.openNewIssueCommentModal,
+		}),
+		defineCommand({
+			id: "comments.reply",
+			title: "Reply to comment",
+			scope: "Comments",
+			subtitle: selectedPullRequestLabel,
+			shortcut: "shift-r",
+			disabledReason: selectedCommentReason,
+			keywords: ["respond", "thread"],
+			run: actions.openReplyToSelectedComment,
+		}),
 		defineCommand({
 			id: "diff.close",
 			title: "Close diff view",
@@ -558,11 +593,12 @@ export const buildAppCommands = ({
 		}),
 		forSelected({
 			id: "pull.toggle-draft",
-			title: selectedPullRequest?.reviewStatus === "draft" ? "Mark ready for review" : "Mark as draft",
+			title: selectedPullRequest?.reviewStatus === "draft" ? "Mark ready for review" : "Convert to draft",
 			scope: "Pull request",
 			shortcut: "s",
+			requireOpen: true,
 			keywords: ["state", "ready"],
-			run: actions.togglePullRequestDraftStatus,
+			run: actions.openPullRequestStateModal,
 		}),
 		forSelected({
 			id: "pull.labels",

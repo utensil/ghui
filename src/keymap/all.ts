@@ -4,6 +4,7 @@ import { closeModalKeymap, type CloseModalCtx } from "./closeModal.ts"
 import { commandPaletteKeymap, type CommandPaletteCtx } from "./commandPalette.ts"
 import { commitListModalKeymap, type CommitListModalCtx } from "./commitListModal.ts"
 import { commentModalKeymap, type CommentModalCtx } from "./commentModal.ts"
+import { commentsViewKeymap, type CommentsViewCtx } from "./commentsView.ts"
 import { commentThreadModalKeymap, type CommentThreadModalCtx } from "./commentThreadModal.ts"
 import { detailViewKeymap, type DetailViewCtx } from "./detailView.ts"
 import { diffViewKeymap, type DiffViewCtx } from "./diffView.ts"
@@ -12,6 +13,7 @@ import { labelModalKeymap, type LabelModalCtx } from "./labelModal.ts"
 import { listNavKeymap, type ListNavCtx } from "./listNav.ts"
 import { mergeModalKeymap, type MergeModalCtx } from "./mergeModal.ts"
 import { openRepositoryModalKeymap, type OpenRepositoryModalCtx } from "./openRepositoryModal.ts"
+import { pullRequestStateModalKeymap, type PullRequestStateModalCtx } from "./pullRequestStateModal.ts"
 import { submitReviewModalKeymap, type SubmitReviewModalCtx } from "./submitReviewModal.ts"
 import { themeModalKeymap, type ThemeModalCtx } from "./themeModal.ts"
 
@@ -20,6 +22,7 @@ export interface AppCtx {
 	readonly commitListModalActive: boolean
 	readonly closeModalActive: boolean
 	readonly confirmActionModalActive: boolean
+	readonly pullRequestStateModalActive: boolean
 	readonly mergeModalActive: boolean
 	readonly commentThreadModalActive: boolean
 	readonly changedFilesModalActive: boolean
@@ -32,6 +35,7 @@ export interface AppCtx {
 	readonly filterMode: boolean
 	readonly diffFullView: boolean
 	readonly detailFullView: boolean
+	readonly commentsViewActive: boolean
 
 	// True whenever a modal/mode swallows raw text input (so q-quit, etc. are
 	// disabled inside text-editing contexts).
@@ -41,6 +45,7 @@ export interface AppCtx {
 	readonly commitListModal: CommitListModalCtx
 	readonly closeModal: CloseModalCtx
 	readonly confirmActionModal: CloseModalCtx
+	readonly pullRequestStateModal: PullRequestStateModalCtx
 	readonly mergeModal: MergeModalCtx
 	readonly commentThreadModal: CommentThreadModalCtx
 	readonly changedFilesModal: ChangedFilesModalCtx
@@ -53,6 +58,7 @@ export interface AppCtx {
 	readonly filterModeCtx: FilterModeCtx
 	readonly diff: DiffViewCtx
 	readonly detail: DetailViewCtx
+	readonly commentsView: CommentsViewCtx
 	readonly listNav: ListNavCtx
 
 	// Always-on / app-level
@@ -66,6 +72,7 @@ const modalActive = (a: AppCtx): boolean =>
 	a.commitListModalActive ||
 	a.closeModalActive ||
 	a.confirmActionModalActive ||
+	a.pullRequestStateModalActive ||
 	a.mergeModalActive ||
 	a.commentThreadModalActive ||
 	a.changedFilesModalActive ||
@@ -76,7 +83,7 @@ const modalActive = (a: AppCtx): boolean =>
 	a.commentModalActive ||
 	a.commandPaletteActive
 
-const inListMode = (a: AppCtx): boolean => !modalActive(a) && !a.filterMode && !a.diffFullView && !a.detailFullView
+const inListMode = (a: AppCtx): boolean => !modalActive(a) && !a.filterMode && !a.diffFullView && !a.detailFullView && !a.commentsViewActive
 
 export const appKeymap = App(
 	// Always-on: command palette opener
@@ -101,6 +108,7 @@ export const appKeymap = App(
 	commitListModalKeymap.scope((a) => a.commitListModalActive && a.commitListModal),
 	closeModalKeymap.scope((a) => a.closeModalActive && a.closeModal),
 	closeModalKeymap.scope((a) => a.confirmActionModalActive && a.confirmActionModal),
+	pullRequestStateModalKeymap.scope((a) => a.pullRequestStateModalActive && a.pullRequestStateModal),
 	mergeModalKeymap.scope((a) => a.mergeModalActive && a.mergeModal),
 	commentThreadModalKeymap.scope((a) => a.commentThreadModalActive && a.commentThreadModal),
 	changedFilesModalKeymap.scope((a) => a.changedFilesModalActive && a.changedFilesModal),
@@ -115,6 +123,7 @@ export const appKeymap = App(
 	// Full-view layers (only when no modal is on top)
 	diffViewKeymap.scope((a) => a.diffFullView && !modalActive(a) && a.diff),
 	detailViewKeymap.scope((a) => a.detailFullView && !modalActive(a) && a.detail),
+	commentsViewKeymap.scope((a) => a.commentsViewActive && !modalActive(a) && a.commentsView),
 
 	// PR list nav
 	listNavKeymap.scope((a) => inListMode(a) && a.listNav),

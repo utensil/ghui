@@ -6,6 +6,7 @@ import { useEffect, useState } from "react"
 import { LoadingLogoPane } from "../src/ui/LoadingLogo.js"
 import { colors } from "../src/ui/colors.js"
 import { centerCell, PlainLine } from "../src/ui/primitives.js"
+import { SPINNER_INTERVAL_MS } from "../src/ui/spinner.js"
 
 process.env.OTUI_USE_ALTERNATE_SCREEN = "true"
 
@@ -31,7 +32,7 @@ const LoadingLogoPlayground = () => {
 	const state = STATES[stateIndex]!
 
 	useEffect(() => {
-		const timer = setInterval(() => setFrame((current) => current + 1), 120)
+		const timer = setInterval(() => setFrame((current) => current + 1), SPINNER_INTERVAL_MS)
 		return () => clearInterval(timer)
 	}, [])
 
