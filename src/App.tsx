@@ -337,6 +337,7 @@ const pullRequestDiffCacheAtom = Atom.make<Record<string, PullRequestDiffState>>
 const activeModalAtom = Atom.make<Modal>(initialModal)
 const themeIdAtom = Atom.make<ThemeId>(initialThemeId).pipe(Atom.keepAlive)
 const labelCacheAtom = Atom.make<Record<string, readonly PullRequestLabel[]>>({}).pipe(Atom.keepAlive)
+const commitListCacheAtom = Atom.make<Record<string, readonly CommitItem[]>>({}).pipe(Atom.keepAlive)
 const repoMergeMethodsCacheAtom = Atom.make<Record<string, RepositoryMergeMethods>>({}).pipe(Atom.keepAlive)
 const lastUsedMergeMethodAtom = Atom.make<Record<string, PullRequestMergeMethod>>({}).pipe(Atom.keepAlive)
 const pullRequestOverridesAtom = Atom.make<Record<string, PullRequestItem>>({}).pipe(Atom.keepAlive)
@@ -744,6 +745,7 @@ export const App = () => {
 	themeIdRef.current = themeId
 	themeModalRef.current = themeModal
 	const setLabelCache = useAtomSet(labelCacheAtom)
+	const setCommitListCache = useAtomSet(commitListCacheAtom)
 	const setRepoMergeMethodsCache = useAtomSet(repoMergeMethodsCacheAtom)
 	const setLastUsedMergeMethod = useAtomSet(lastUsedMergeMethodAtom)
 	const setPullRequestOverrides = useAtomSet(pullRequestOverridesAtom)
@@ -1532,10 +1534,34 @@ export const App = () => {
 
 	const openCommitListModal = () => {
 		if (!selectedPullRequest) return
-		setCommitListModal({ selectedIndex: 0, commits: [], loading: true })
+		const cacheKey = `${selectedPullRequest.repository}#${selectedPullRequest.number}`
+		const cached = registry.get(commitListCacheAtom)[cacheKey]
+
+		// Show cached immediately, or loading state if no cache
+		setCommitListModal({
+			selectedIndex: 0,
+			commits: cached ?? [],
+			loading: !cached,
+		})
+
+		// Always fetch fresh in background
 		void loadPullRequestCommits({ repository: selectedPullRequest.repository, number: selectedPullRequest.number })
-			.then((commits) => {
-				setCommitListModal((current) => ({ ...current, commits, loading: false }))
+			.then((freshCommits) => {
+				// Update cache
+				setCommitListCache((cache) => ({ ...cache, [cacheKey]: freshCommits }))
+				// Update modal if data changed
+				setCommitListModal((current) => {
+					if (
+						current.commits.length === freshCommits.length &&
+						current.commits.every((c, i) => c.oid === freshCommits[i]?.oid)
+					) {
+						// Same data, just clear loading
+						return { ...current, loading: false }
+					}
+					// Data changed — preserve selection index if still valid
+					const selectedIndex = Math.min(current.selectedIndex, Math.max(0, freshCommits.length - 1))
+					return { selectedIndex, commits: freshCommits, loading: false }
+				})
 			})
 			.catch((error) => {
 				setCommitListModal((current) => ({ ...current, loading: false }))
